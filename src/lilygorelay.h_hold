@@ -1,0 +1,72 @@
+#include <Arduino.h>
+#include <IotWebConf.h>
+#include <IotWebConfUsing.h>
+#include <IotWebConfTParameter.h>
+#include <ArduinoJson.h>
+#include "Log.h"
+
+using namespace std;
+
+
+#define LILYGO_NUMBER_CONFIG_LEN 6
+#define LILYGO_WORD_CONFIG_LEN 12
+
+#ifdef LILYGORELAY8
+#define RELAYS 8
+#else
+#define RELAYS 4
+#endif
+
+constexpr char RELAYON[] = "ABCDEFGH";
+constexpr char RELAYOFF[] = "abcdefgh";
+
+const uint32_t LILYGO_NO_PIN = 0;
+
+#define FREE_INDEX 0
+#define SOC_INDEX 1
+#define BV_INDEX 2
+#define BC_INDEX 3
+#define PC_INDEX 4
+
+static char measureNamesValues[][LILYGO_WORD_CONFIG_LEN] =  { "Free", "SOC", "Bat Volts", "Bat Current", "PV Current" };
+
+#define FALLOFF_INDEX 0
+#define FALLON_INDEX 1
+static char riseFallNamesValues[][LILYGO_WORD_CONFIG_LEN] =  { "Fall-Off", "Fall-On"};
+
+
+struct RelayParamsBasic {
+    uint32_t relayPin;
+    iotwebconf::TextTParameter<LILYGO_WORD_CONFIG_LEN> relayNameParam;
+    iotwebconf::CheckboxTParameter relayStateParam;
+    iotwebconf::IntTParameter<int16_t> relayButtonPinParam;
+    iotwebconf::ParameterGroup relayGroup;
+};
+
+struct RelayParamsAuto {
+    iotwebconf::SelectTParameter<LILYGO_WORD_CONFIG_LEN> relayMeasureParam;
+    iotwebconf::SelectTParameter<LILYGO_WORD_CONFIG_LEN> relayRiseFallParam;
+    iotwebconf::FloatTParameter relayFallParam;
+    iotwebconf::FloatTParameter relayRiseParam;
+};
+
+extern RelayParamsBasic relayParamsBasic[];
+extern RelayParamsAuto relayParamsAuto[];
+
+struct Measures {
+    float relaySOC = 0.0;
+    float relayBatVoltage = 0.0;
+    float relayWhizbangBatCurrent = 0.0;
+    float relayPVCurrent = 0.0;
+    unsigned long updateTime = 0;
+};
+extern Measures relayMeasures;
+
+bool lilygoAction(String a);
+String lilygoBuildAction();
+void lilygocheckUpdatePins();
+void lilygoInitializePins();
+void lilgoUpdateRelaysFromSaved();
+void setupRelayGroups();
+bool lilygoHandleRelays();
+bool lilygoDoLoop();

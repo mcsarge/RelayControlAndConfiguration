@@ -1,0 +1,446 @@
+#include <Arduino.h>
+#include <Preferences.h>
+#include <WiFi.h>
+#include <EEPROM.h>
+#include <IotWebConf.h>
+#include <IotWebConfUsing.h>
+#include <ArduinoJson.h>
+#include <AsyncMqttClient.h>
+#include "Log.h"
+#include "lilygorelay.h"
+
+
+// Include Update server
+#ifdef ESP8266
+# include <ESP8266HTTPUpdateServer.h>
+#elif defined(ESP32)
+# include <IotWebConfESP32HTTPUpdateServer.h>
+#endif
+
+
+using namespace std;
+
+#define CONFIG_VERSION "V1.0.0" // major.minor.build (major or minor will invalidate the configuration)
+#define NUMBER_CONFIG_LEN 6
+#define WATCHDOG_TIMER 600000               //time in ms to trigger the watchdog
+#define DEFAULT_MQTT_PORT "1883"
+#define DEFAULT_MQTT_ROOT "RelayControl"
+
+AsyncMqttClient _mqttClient;
+TimerHandle_t mqttReconnectTimer;
+DNSServer _dnsServer;
+WebServer _webServer(80);
+#ifdef ESP8266
+ESP8266HTTPUpdateServer httpUpdater;
+#elif defined(ESP32)
+HTTPUpdateServer httpUpdater;
+#endif
+IotWebConf _iotWebConf(TAG, &_dnsServer, &_webServer, TAG, CONFIG_VERSION);
+hw_timer_t *_watchdogTimer = NULL;
+
+char _mqttServer[IOTWEBCONF_WORD_LEN];
+char _mqttPort[NUMBER_CONFIG_LEN];
+char _mqttUserName[IOTWEBCONF_WORD_LEN];
+char _mqttUserPassword[IOTWEBCONF_WORD_LEN];
+char _mqttRootTopic[64];
+char _willTopic[64];
+char _rootTopicPrefix[64];
+
+iotwebconf::ParameterGroup MQTT_group = iotwebconf::ParameterGroup("MQTT", "MQTT");
+iotwebconf::TextParameter mqttServerParam = iotwebconf::TextParameter("MQTT server", "mqttServer", _mqttServer, IOTWEBCONF_WORD_LEN);
+iotwebconf::NumberParameter mqttPortParam = iotwebconf::NumberParameter("MQTT port", "mqttSPort", _mqttPort, NUMBER_CONFIG_LEN, "text", NULL, "1883");
+iotwebconf::TextParameter mqttUserNameParam = iotwebconf::TextParameter("MQTT user", "mqttUser", _mqttUserName, IOTWEBCONF_WORD_LEN);
+iotwebconf::PasswordParameter mqttUserPasswordParam = iotwebconf::PasswordParameter("MQTT password", "mqttPass", _mqttUserPassword, IOTWEBCONF_WORD_LEN, "password");
+iotwebconf::TextParameter mqttRootTopicParam = iotwebconf::TextParameter("MQTT Root Topic", "mqttRootTopic", _mqttRootTopic, IOTWEBCONF_WORD_LEN);
+
+bool _clientsConfigured = false;
+bool _mqttReadingsAvailable = false;
+bool _boilerPlateInfoPublished = false;
+uint8_t _boilerPlateReadBitField = 0;
+
+const char IOTWEBCONF_HTML_RELAYPAGE[] PROGMEM = "<div>Go to <a href='relayParams'>Relay Control</a>.</div>\n";
+class CustomHtmlFormatProvider : public iotwebconf::HtmlFormatProvider
+{
+protected:
+  String getFormSaved() override
+  {
+    logd("in custom format provider");
+	return HtmlFormatProvider::getFormSaved() +
+      String(FPSTR(IOTWEBCONF_HTML_RELAYPAGE)); 
+  }
+
+  String getEnd() override
+  {
+    logd("in custom format provider");
+	return 
+      String(FPSTR(IOTWEBCONF_HTML_RELAYPAGE)) + 
+	  HtmlFormatProvider::getEnd(); 
+  }
+};
+// -- An instance must be created from the class defined above.
+CustomHtmlFormatProvider customHtmlFormatProvider;
+
+void IRAM_ATTR resetModule()
+{
+	//ets_printf("watchdog timer expired - rebooting\n");
+	esp_restart();
+}
+
+void init_watchdog()
+{
+	if (_watchdogTimer == NULL)
+	{
+		_watchdogTimer = timerBegin(1, 80, true);					   //timer 0, div 80
+		timerAttachInterrupt(_watchdogTimer, &resetModule, true);	  //attach callback
+		timerAlarmWrite(_watchdogTimer, WATCHDOG_TIMER * 1000, false); //set time in us
+		timerAlarmEnable(_watchdogTimer);							   //enable interrupt
+	}
+}
+
+void feed_watchdog()
+{
+	if (_watchdogTimer != NULL)
+	{
+		timerWrite(_watchdogTimer, 0); // feed the watchdog
+	}
+}
+
+void publish(const char *subtopic, const char *value, boolean retained = false)
+{
+	if (_mqttClient.connected())
+	{
+		char buf[64];
+		sprintf(buf, "%s/stat/%s", _rootTopicPrefix, subtopic);
+		_mqttClient.publish(buf, 0, retained, value);
+	}
+}
+
+
+void onMqttConnect(bool sessionPresent)
+{
+	logd("Connected to MQTT. Session present: %d", sessionPresent);
+	char buf[64];
+	sprintf(buf, "%s/cmnd/#", _rootTopicPrefix);
+	_mqttClient.subscribe(buf, 0);
+	_mqttClient.publish(_willTopic, 0, false, "Online");
+	_boilerPlateInfoPublished = false;
+	logi("Subscribed to [%s], qos: 0", buf);
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
+{
+	logi("Disconnected from MQTT. Reason: %d", (int8_t)reason);
+	if (WiFi.isConnected())
+	{
+		xTimerStart(mqttReconnectTimer, 0);
+	}
+}
+
+void connectToMqtt()
+{
+	if (WiFi.isConnected())
+	{
+		if (strlen(_mqttServer) > 0) // mqtt configured
+		{
+			logi("Connecting to MQTT...");
+			int len = strlen(_mqttRootTopic);
+			strncpy(_rootTopicPrefix, _mqttRootTopic, len);
+			if (_rootTopicPrefix[len - 1] != '/')
+			{
+				strcat(_rootTopicPrefix, "/");
+			}
+			strcat(_rootTopicPrefix, "RelayControl"); //Fix this
+
+			sprintf(_willTopic, "%s/tele/LWT", _rootTopicPrefix);
+			_mqttClient.setWill(_willTopic, 0, true, "Offline");
+			_mqttClient.connect();
+
+			logd("_mqttRootTopic: %s", _mqttRootTopic);
+			logd("rootTopicPrefix: %s", _rootTopicPrefix);
+		}
+	}
+}
+
+/**
+ * Handle web requests to "/" path.
+ */
+void handleRoot()
+{
+	// -- Let IotWebConf test and handle captive portal requests.
+	if (_iotWebConf.handleCaptivePortal())
+	{
+		// -- Captive portal request were already served.
+		return;
+	}
+	String s = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/>";
+	s += "<title>ClassicMQTT</title></head><body>";
+	s += _iotWebConf.getThingName();
+	s += "<ul>";
+	s += "<li>MQTT server: ";
+	s += _mqttServer;
+	s += "</ul>";
+	s += "<ul>";
+	s += "<li>MQTT port: ";
+	s += _mqttPort;
+	s += "</ul>";
+	s += "<ul>";
+	s += "<li>MQTT user: ";
+	s += _mqttUserName;
+	s += "</ul>";
+	s += "<ul>";
+	s += "<li>MQTT root topic: ";
+	s += _mqttRootTopic;
+	s += "</ul>";
+    s += "Go to <a href='relayParams'>Relay Control</a> to control relayParams.<br>";
+	s += "Go to <a href='config'>configure page</a> to change values.";
+	s += "</body></html>\n";
+	_webServer.send(200, "text/html", s);
+}
+
+void handleRelays()
+{
+	// -- Let IotWebConf test and handle captive portal requests.
+	if (_iotWebConf.handleCaptivePortal())
+	{
+		// -- Captive portal request were already served.
+		return;
+	}
+   	if (_webServer.hasArg("action"))
+	{
+		if (lilygoAction(_webServer.arg("action")))
+			_iotWebConf.saveConfig();
+	}
+	String s = "<!DOCTYPE html><html lang=\"en\"><head>";
+	s += "<style>table, th, td {border: 1px solid black;border-collapse: collapse;}th, td {padding: 5px;}</style>";
+	s += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/>";
+	s += "<title>Relay Control</title></head><body>";
+	s += "Relay Control for ";
+	s += _iotWebConf.getThingName();
+    s += lilygoBuildAction();
+	s += "Go to <a href='config'>configure page</a> to change system parameter values.";
+	s += "</body></html>\n";
+	_webServer.send(200, "text/html", s);
+}
+
+void configSaved()
+{
+	logi("Configuration was updated.");
+
+    //Check each relay against the requested state and change it if they differ.
+    lilygocheckUpdatePins();
+}
+
+boolean formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper)
+{
+	boolean valid = true;
+	// long mqttServerParamLength = _webServer.arg(mqttServerParam.getId()).length();
+	// if (mqttServerParamLength == 0)
+	// {
+	// 	mqttServerParam.errorMessage = "MQTT server is required";
+	// 	valid = false;
+	// }
+	return valid;
+}
+
+void WiFiEvent(WiFiEvent_t event)
+{
+	logd("[WiFi-event] event: %d", event);
+	String s;
+	StaticJsonDocument<128> doc;
+	switch (event)
+	{
+	case SYSTEM_EVENT_STA_GOT_IP:
+		doc["IP"] = WiFi.localIP().toString();
+		doc["ApPassword"] = TAG;
+		serializeJson(doc, s);
+		s += '\n';
+		Serial.printf(s.c_str()); // send json to flash tool
+		xTimerStart(mqttReconnectTimer, 0); // connect to MQTT once we have wifi
+		break;
+	case SYSTEM_EVENT_STA_DISCONNECTED:
+		logi("WiFi lost connection");
+		xTimerStop(mqttReconnectTimer, 0); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
+		break;
+	default:
+		break;
+	}
+}
+
+void onMqttPublish(uint16_t packetId)
+{
+	logi("Publish acknowledged.  packetId: %d", packetId);
+}
+
+void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total)
+{
+	logd("MQTT Message arrived [%s]  qos: %d len: %d index: %d total: %d", topic, properties.qos, len, index, total);
+	printCharString(payload, len);
+
+	StaticJsonDocument<64> mqttMsgDoc;
+	DeserializationError err = deserializeJson(mqttMsgDoc, payload);
+	if (err) // not json!
+	{
+		logd("MQTT payload is not valid JSON!");
+	}
+	else 
+	{
+		boolean messageProcessed = false;
+		if (!messageProcessed)
+		{
+			logd("MQTT Json payload not recognized!");
+		}
+	}
+}
+
+void setup()
+{
+	Serial.begin(115200);
+	while (!Serial)
+	{
+		; // wait for serial port to connect. Needed for native USB port only
+	}
+	logd("Booting");
+
+	pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
+
+	_iotWebConf.setHtmlFormatProvider(&customHtmlFormatProvider);
+
+	_iotWebConf.setStatusPin(WIFI_STATUS_PIN);
+	_iotWebConf.setConfigPin(WIFI_AP_PIN);
+	// setup EEPROM parameters
+   	MQTT_group.addItem(&mqttServerParam);
+	MQTT_group.addItem(&mqttPortParam);
+   	MQTT_group.addItem(&mqttUserNameParam);
+	MQTT_group.addItem(&mqttUserPasswordParam);
+	MQTT_group.addItem(&mqttRootTopicParam);
+	_iotWebConf.addParameterGroup(&MQTT_group);
+
+    setupRelayGroups();
+	for (int i=0; i<RELAYS; i++){
+		_iotWebConf.addParameterGroup(&relayParamsBasic[i].relayGroup);
+	}
+
+	// setup callbacks for IotWebConf
+	_iotWebConf.setConfigSavedCallback(&configSaved);
+	_iotWebConf.setFormValidator(&formValidator);
+	_iotWebConf.setupUpdateServer(
+      [](const char* updatePath) { httpUpdater.setup(&_webServer, updatePath); },
+      [](const char* userName, char* password) { httpUpdater.updateCredentials(userName, password); });
+
+	if (digitalRead(FACTORY_RESET_PIN) == LOW)
+	{
+		EEPROM.begin(IOTWEBCONF_CONFIG_START + IOTWEBCONF_CONFIG_VERSION_LENGTH );
+		for (byte t = 0; t < IOTWEBCONF_CONFIG_VERSION_LENGTH; t++)
+		{
+			EEPROM.write(IOTWEBCONF_CONFIG_START + t, 0);
+		}
+		EEPROM.commit();
+		EEPROM.end();
+		_iotWebConf.resetWifiAuthInfo();
+		logw("Factory Reset!");
+	}
+	mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+	WiFi.onEvent(WiFiEvent);
+	boolean validConfig = _iotWebConf.init();
+	if (!validConfig)
+	{
+		logw("!invalid configuration!");
+		//Load the defaults
+		_mqttServer[0] = '\0';
+		strcpy(_mqttPort,DEFAULT_MQTT_PORT);
+		_mqttUserName[0] = '\0';
+		_mqttUserPassword[0] = '\0';
+		strcpy(_mqttRootTopic, DEFAULT_MQTT_ROOT);
+		_iotWebConf.resetWifiAuthInfo();
+	}
+	else
+	{
+		_iotWebConf.skipApStartup(); // Set WIFI_AP_PIN to gnd to force AP mode
+		if (_mqttServer[0] != '\0') // skip if factory reset
+		{
+			logi("Valid configuration!");
+			_clientsConfigured = true;
+			_mqttClient.onConnect(onMqttConnect);
+			_mqttClient.onDisconnect(onMqttDisconnect);
+			_mqttClient.onMessage(onMqttMessage);
+			_mqttClient.onPublish(onMqttPublish);
+
+			IPAddress ip;
+			int port = atoi(_mqttPort);
+			if (ip.fromString(_mqttServer))
+			{
+				_mqttClient.setServer(ip, port);
+			}
+			else
+			{
+				_mqttClient.setServer(_mqttServer, port);
+			}
+			_mqttClient.setCredentials(_mqttUserName, _mqttUserPassword);
+		}
+	}
+    lilygoInitializePins();
+    lilgoUpdateRelaysFromSaved();
+
+	// IotWebConfParameter* p = _iotWebConf.getApPasswordParameter();
+	// logi("AP Password: %s", p->valueBuffer);
+	// Set up required URL handlers on the web server.
+	_webServer.on("/", handleRoot);
+	_webServer.on("/config", [] { _iotWebConf.handleConfig(); });
+	_webServer.on("/relayParams", [] { handleRelays(); });
+	_webServer.on("/reset", [] { resetModule(); });
+	_webServer.onNotFound([]() { _iotWebConf.handleNotFound(); });
+	init_watchdog();
+	logd("Done setup");
+}
+
+void loop()
+{
+	feed_watchdog();
+
+	_iotWebConf.doLoop();
+    if (lilygoDoLoop()){
+		_iotWebConf.saveConfig();
+	}
+
+	if (_clientsConfigured && WiFi.isConnected())
+	{
+	}
+	else
+	{
+		if (Serial.peek() == '{')
+		{
+			String s = Serial.readStringUntil('}');
+			s += "}";
+			StaticJsonDocument<128> doc;
+			DeserializationError err = deserializeJson(doc, s);
+			if (err)
+			{
+				loge("deserializeJson() failed: %s", err.c_str());
+			}
+			else
+			{
+				if (doc.containsKey("ssid") && doc.containsKey("password"))
+				{
+					iotwebconf::Parameter *p = _iotWebConf.getWifiSsidParameter();
+					strcpy(p->valueBuffer, doc["ssid"]);
+					logd("Setting ssid: %s", p->valueBuffer);
+					p = _iotWebConf.getWifiPasswordParameter();
+					strcpy(p->valueBuffer, doc["password"]);
+					logd("Setting password: %s", p->valueBuffer);
+					p = _iotWebConf.getApPasswordParameter();
+					strcpy(p->valueBuffer, TAG); // reset to default AP password
+					_iotWebConf.saveConfig();
+					resetModule();
+				}
+				else
+				{
+					logw("Received invalid json: %s", s.c_str());
+				}
+			}
+		}
+		else
+		{
+			Serial.read(); // discard data
+		}
+	}
+}

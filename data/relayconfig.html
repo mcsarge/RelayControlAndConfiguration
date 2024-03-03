@@ -1,26 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Relay Configuration</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" type="text/css" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay Configuration</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" type="text/css" href="style.css">
 </head>
 <body>
-  <div class="topnav">
-    <h1>Relay Configuration</h1>
-  </div>
-  <div class="content">
-    <div class="card-grid">
-      <div class="card">
-        <form action="/relayconfig" method="POST">
-          <p>
-            %RELAYARRAYCONFIG%
-            <input type ="submit" value ="Submit">
-          </p>
-        </form>
-      </div>
-    </div>
-  </div>
+<h1>Relay Configuration</h1>
+<form id="relay-form" action="/relayconfig" method="POST">
+%RELAYARRAYCONFIG%
+<button type="submit">Submit</button>
+</form>
 </body>
 </html>

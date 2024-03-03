@@ -1,26 +1,18 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>%NAME%</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" type="text/css" href="style.css">
-    <link rel="icon" type="image/png" href="favicon.png">
-    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
-  </head>
-  <body>
-    <div class="topnav">
-      <h1>%NAME%</h1>
-    </div>
-    <div class="content">
-      <div class="card-grid">
-        <div class="card">
-            %RELAYSWITCHES%
-        </div>
-      </div>
-      <div>
-        <br>
-        <a href="/relayconfig">Configure Relays</a>
-      </div>
+   <html lang="en">
+    <head>
+       <meta charset="UTF-8">
+       <meta name="viewport" content="width=device-width, initial-scale=1.0">
+       <title>%NAME%</title>
+       <link rel="icon" type="image/png" href="favicon.png">
+       <link rel="stylesheet" type="text/css" href="style.css">
+    </head>
+    <body>
+    <h1>%NAME%</h1>
+    <div class="relay-container">
+      %RELAYSWITCHES%
+      <br>
+      <a href="/relayconfig">Configure Relays</a>
     </div>
     <script>
       if (!!window.EventSource) {
@@ -49,6 +41,12 @@
         else { xhr.open("GET", "/update?output="+element.id+"&state=0", true); }
         xhr.send();
       }
+      function saveStates(element) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "/update?saverelaystates", true);
+        xhr.send();
+        alert('Current relay states have been saved. Following a reset, the same relays will be on.')
+      }
       </script>
-  </body>
-</html>
+    </body>
+    </html>

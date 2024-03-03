@@ -1,158 +1,154 @@
-html {
-  font-family: Arial, Helvetica, sans-serif; 
-  display: inline-block; 
-  text-align: center;
+/* Body Styles */
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 20px;
 }
 
 h1 {
-  font-size: 1.8rem; 
-  color: white;
-}
-
-p { 
-  font-size: 1.4rem;
-}
-
-.topnav { 
-  overflow: hidden; 
-  background-color: #0A1128;
-}
-
-body {  
-  margin: 0;
-}
-
-.content { 
-  padding: 5%;
-}
-
-.card-grid { 
-  max-width: 800px; 
-  margin: 0 auto; 
-  display: grid; 
-  grid-gap: 2rem; 
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-}
-
-.card { 
-  background-color: white; 
-  box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
-}
-
-.card-title { 
-  font-size: 1.2rem;
-  font-weight: bold;
-  color: #034078
-}
-
-input[type=submit] {
-  border: none;
-  color: #FEFCFB;
-  background-color: #034078;
-  padding: 15px 15px;
   text-align: center;
-  text-decoration: none;
-  display: inline-block;
-  font-size: 16px;
-  width: 100px;
+}
+
+/* Form Styles */
+#relay-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.relay-section {
+  border: 2px solid #ccc;
+  padding: 5px;
+  margin-bottom: 5px;
+}
+
+.relay-section h3 {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 1px;
+}
+
+.relay-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+label {
   margin-right: 10px;
-  border-radius: 4px;
-  transition-duration: 0.4s;
-  }
-
-input[type=submit]:hover {
-  background-color: #1282A2;
+  text-align: right;
+  width: 100px;
 }
 
-input[type=text], input[type=number], select {
-  width: 50%;
-  padding: 12px 20px;
-  margin: 18px;
-  display: inline-block;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-sizing: border-box;
+input[type="text"] {
+  padding: 5px;
+  width: 200px;
+}
+input[type="number"] {
+  padding: 5px;
+  width: 50px;
 }
 
+button {
+  padding: 10px 20px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #45a049;
+}
+
+
+/* Relay Container Styles */
+.relay-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Relay Item Styles */
+.relay-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.relay-name {
+  margin-left: 10px;
+  padding: 5px;
+  width: 200px;
+}
+
+/* Checkbox Styles */
 .switch {
-  display: inline-block;
-  height: 34px;
   position: relative;
+  display: inline-block;
   width: 60px;
+  height: 34px;
 }
 
 .switch input {
-  display:none;
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
 
 .slider {
-  background-color: #ccc;
-  bottom: 0;
-  cursor: pointer;
-  left: 0;
   position: absolute;
-  right: 0;
+  cursor: pointer;
   top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
   transition: .4s;
+  border-radius: 34px;
 }
 
 .slider:before {
-  background-color: #fff;
-  bottom: 4px;
+  position: absolute;
   content: "";
   height: 26px;
-  left: 4px;
-  position: absolute;
-  transition: .4s;
   width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
 }
 
 input:checked + .slider {
-  background-color: #66bb6a;
+  background-color: #4CAF50;
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px #4CAF50;
 }
 
 input:checked + .slider:before {
   transform: translateX(26px);
 }
 
-.slider.round {
-  border-radius: 34px;
-}
-
-.slider.round:before {
+/* Rounded sliders */
+.slider:before {
   border-radius: 50%;
 }
 
-label {
-  font-size: 1.2rem; 
-}
-.value{
-  font-size: 1.2rem;
-  color: #1282A2;  
-}
-.state {
-  font-size: 1.2rem;
-  color: #1282A2;
-}
-button {
+/* Button Styles */
+.save-button {
+  margin-top: 20px;
+  padding: 10px 20px;
+  background-color: #4CAF50;
+  color: white;
   border: none;
-  color: #FEFCFB;
-  padding: 15px 32px;
-  text-align: center;
-  font-size: 16px;
-  width: 100px;
-  border-radius: 4px;
-  transition-duration: 0.4s;
+  border-radius: 5px;
+  cursor: pointer;
 }
-.button-on {
-  background-color: #034078;
+
+.save-button:hover {
+  background-color: #45a049;
 }
-.button-on:hover {
-  background-color: #1282A2;
-}
-.button-off {
-  background-color: #858585;
-}
-.button-off:hover {
-  background-color: #252524;
-} 

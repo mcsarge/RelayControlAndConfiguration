@@ -1,19 +1,19 @@
 /*********
-  Rui Santos
-  Complete instructions at https://RandomNerdTutorials.com/esp32-wi-fi-manager-asyncwebserver/
-  
-  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.
-  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+Relay Control and Configuration
+This code works with the Lilygo Relay 8 and relay 4
 *********/
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
-//#include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <Effortless_SPIFFS.h>
+#include <esp_log.h>
 #include "relayInformation.h"
+#include "secrets.h"
+
+static const char* TAG = "RelayControl";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -41,15 +41,24 @@ unsigned long previousMillis = 0;
 const long interval = 10000;  // interval to wait for Wi-Fi connection (milliseconds)
 
 // Set LED GPIO
-const int ledPin = WIFI_STATUS_PIN;
+const int ledPin = LED_PIN;
+
 // Stores LED state
 String ledState;
 
-relayInformation relays[4]={
-  relayInformation(1, RELAY1_PIN, "Relay 1", "/relay1"),
-  relayInformation(2, RELAY2_PIN, "Relay 2", "/relay2"),
-  relayInformation(3, RELAY3_PIN, "Relay 3", "/relay3"),
-  relayInformation(4, RELAY4_PIN, "Relay 4", "/relay4")
+relayInformation relays[RELAYS] ={
+  relayInformation(1, RELAY1_PIN, "Relay 1", 2),
+  relayInformation(2, RELAY2_PIN, "Relay 2"),
+  relayInformation(3, RELAY3_PIN, "Relay 3"),
+#if RELAYS<=4
+  relayInformation(4, RELAY4_PIN, "Relay 4")
+#else
+  relayInformation(4, RELAY4_PIN, "Relay 4"),
+  relayInformation(5, RELAY5_PIN, "Relay 5"),
+  relayInformation(6, RELAY6_PIN, "Relay 6"),
+  relayInformation(7, RELAY7_PIN, "Relay 7"),
+  relayInformation(8, RELAY8_PIN, "Relay 8")
+#endif
 };
 
 
@@ -64,107 +73,67 @@ relayInformation relays[4]={
 
 
 
-String processor(const String& var){
-  Serial.println(var);
-  if(var == "NAME"){
-     return name;
+String processor(const String& replacementString){
+  ESP_LOGD(TAG, "In Processor");
+  if(replacementString == "NAME"){
+    ESP_LOGD(TAG, "NAME");
+    return name;
   }
-  else if (var == "RELAYARRAYCONFIG"){
+  else if (replacementString == "RELAYARRAYCONFIG"){
+    ESP_LOGD(TAG, "RELAYARRAYCONFIG");
     String retString =
-       "<label for=\"name\">Name </label><input type=\"text\" id =\"name\" name=\"name\"   value=\"" + name + "\"><br>";
-    for (int i = 0; i<4; i++) {
-       retString += relays[i].configHTML();
+    String("<div class=\"input-container\">") +
+    String(    "<label for=\"input1\">Name:</label>") +
+    String(    "<input type=\"text\" id=\"name\" name=\"name\" value=\"" + name + "\" maxlength=\"25\">") +
+    String("</div><br>");
+
+//      "<label for=\"name\">Name</label><input type=\"text\" id =\"name\" name=\"name\"   value=\"" + name + "\"><br>";
+    for (int i = 0; i<RELAYS; i++) {
+      retString += relays[i].configHTML();
     }
-    Serial.println(retString);
     return retString;
   }
-  else if (var == "RELAYSWITCHES") {
+  else if (replacementString == "RELAYSWITCHES") {
+    ESP_LOGD(TAG, "RELAYSWITCHES");
     String retString = "";
-       //"<p class=\"card-title\"><i class=\"fa-solid fa-plug\"></i>" + name + "</p><p>";
-    for (int i = 0; i<4; i++) {
+    for (int i = 0; i<RELAYS; i++) {
        retString += relays[i].actionHTML();
     }
-    retString += "</p>";
-    Serial.println(retString);
+    retString +="<button class=\"save-button\" onclick=\"saveStates(this)\">Save States</button>";
     return retString;
   }
-  else if (var == "RELAYEVENTLISTENERS") {
+  else if (replacementString == "RELAYEVENTLISTENERS") {
+    ESP_LOGD(TAG, "RELAYEVENTLISTENERS");
     String retString;
-    for (int i = 0; i<4; i++) {
+    for (int i = 0; i<RELAYS; i++) {
       retString += relays[i].eventListenerJS();
     }
-    Serial.println(retString);
     return retString;
   }
-  
+    
+  ESP_LOGD(TAG, "Returning nothing");
   return "";
 }
 
 void findSetRelay(String rname, int  val){
-  Serial.println("In findStRelay. relay =" + rname + " value=" + val);
-  for (int i=0; i<4; i++){
+  ESP_LOGD(TAG, "In findSetRelay relay = %s val= %d", rname, val);
+  for (int i=0; i<RELAYS; i++){
     if (rname==relays[i].getShortName()) {
       relays[i].setRelay(val);
     }
   }
 }
 
-
-// // Initialize SPIFFS
-// void initSPIFFS() {
-//   if (!SPIFFS.begin(true)) {
-//     Serial.println("An error has occurred while mounting SPIFFS");
-//   }
-//   Serial.println("SPIFFS mounted successfully");
-// }
-
-// // Read File from SPIFFS
-// String readFile(fs::FS &fs, const char * path, String defaultValue){
-//   Serial.printf("Reading file: %s\r\n", path);
-
-//   File file = fs.open(path);
-//   if(!file || file.isDirectory()){
-//     Serial.println("- failed to open file for reading");
-//     return defaultValue;
-//   }
-  
-//   String fileContent;
-//   while(file.available()){
-//     fileContent = file.readStringUntil('\n');
-//     break;     
-//   }
-//   return fileContent;
-// }
-// String readFile(fs::FS &fs, const char * path){
-//   return readFile(fs, path, String());
-// }
-
-// // Write file to SPIFFS
-// void writeFile(fs::FS &fs, const char * path, const char * message){
-//   Serial.printf("Writing file: %s\r\n", path);
-
-//   File file = fs.open(path, FILE_WRITE);
-//   if(!file){
-//     Serial.println("- failed to open file for writing");
-//     return;
-//   }
-//   if(file.print(message)){
-//     Serial.println("- file written");
-//   } else {
-//     Serial.println("- frite failed");
-//   }
-// }
-
 // Initialize WiFi
 bool initWiFi() {
   if(ssid=="" || name==""){
-    Serial.println("Undefined SSID or Device name.");
+    ESP_LOGE(TAG, "Undefined SSID or Device name.");
     return false;
   }
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), pass.c_str());
-  Serial.println("Connecting to WiFi...");
+  ESP_LOGD(TAG, "Connecting to WiFi...");
 
   unsigned long currentMillis = millis();
   previousMillis = currentMillis;
@@ -172,12 +141,12 @@ bool initWiFi() {
   while(WiFi.status() != WL_CONNECTED) {
     currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
-      Serial.println("Failed to connect.");
+      ESP_LOGE(TAG, "Failed to connect.");
       return false;
     }
   }
 
-  Serial.println(WiFi.localIP());
+  ESP_LOGD(TAG, "IP address is: %s", WiFi.localIP().toString());
   return true;
 }
 
@@ -189,47 +158,62 @@ void setup() {
   #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
     // Check Flash Size - Always try to incorrperate a check when not debugging to know if you have set the SPIFFS correctly
     if (!fileSystem.checkFlashConfig()) {
-      Serial.println("Flash size was not correct! Please check your SPIFFS config and try again");
+      ESP_LOGE(TAG, "Flash size was not correct! Please check your SPIFFS config and try again");
       delay(100000);
       ESP.restart();
     }
   #endif
 
 
-  //initSPIFFS();
-
-  // Set GPIO 2 as an OUTPUT
+  // Set LED as an OUTPUT
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, LOW);
 
-  for (int i=0; i<4;i++){
-    relays[i].relayInit();
-  }
 
   // Load values saved in SPIFFS
   fileSystem.openFromFile(namePath, name);
+  if (name == "") {
+    name = "Relay Control";
+    fileSystem.saveToFile(namePath,name);
+  }
   fileSystem.openFromFile(ssidPath, ssid);
-  if (ssid == "")
-    ssid = "SARGENET";
+  if (ssid == "") {
+    ssid = SECRET_SSID;
+    fileSystem.saveToFile(ssidPath,ssid);
+  }
   fileSystem.openFromFile(passPath,pass);
-  if (pass == "")
-    pass="11223344556677889900aabbcc";
+  if (pass == ""){
+    pass=SECRET_PASS;
+    fileSystem.saveToFile(passPath,pass);
+  }
 
   //Read in the names, and if they are not there, use the defaults already stored in the relay object
-  String tempName;
-  for (int i=0; i<4;i++){
-    fileSystem.openFromFile(relays[i].getRelayPath().c_str(),tempName);
-    if (tempName!="")
-      relays[i].relayName = tempName; 
+  String rawJson;
+  relayInformation tempRelay;
+  for (int i=0; i<RELAYS;i++){
+    rawJson="";
+    fileSystem.openFromFile(relays[i].getRelayPath().c_str(),rawJson);
+    if (rawJson!=""){
+      Serial.println(rawJson);
+      relayInformation tempRelay = relays[i];
+      relays[i] = relayInformation(rawJson);
+      if (relays[i].getErrorCondition()==-1){
+        ESP_LOGE(TAG, "relay from json data failed");
+        relays[i] = tempRelay;
+      }
+    } 
   }  
 
-  Serial.println(ssid);
-  Serial.println(pass);
-  Serial.println(relays[0].relayName);
-  Serial.println(relays[1].relayName);
-  Serial.println(relays[2].relayName);
-  Serial.println(relays[3].relayName);
-  
+  for (int i=0; i<RELAYS;i++){
+    relays[i].relayInit();
+  }
+
+  ESP_LOGD(TAG, "%s", ssid);
+  //ESP_LOGD(TAG, "%s", pass);
+  for (int i=0; i<RELAYS;i++){
+    ESP_LOGD(TAG, "%s", relays[i].relayName);
+  }
+
   if(initWiFi()) {
     // Route for root / web page
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -240,7 +224,7 @@ void setup() {
     // Handle Web Server Events
     events.onConnect([](AsyncEventSourceClient *client){
       if(client->lastId()){
-        Serial.printf("Client reconnected! Last message ID that it got is: %u\n", client->lastId());
+        ESP_LOGD(TAG, "Client reconnected! Last message ID that it got is: %u", client->lastId());
       }
       // send event with message "hello!", id current millis
       // and set reconnect delay to 1 second
@@ -253,30 +237,40 @@ void setup() {
     });
 
     server.on("/relayconfig", HTTP_POST, [](AsyncWebServerRequest *request) {
-      Serial.print("caught post");
+      ESP_LOGD(TAG, "caught post");
       int params = request->params();
       for(int i=0;i<params;i++){
         AsyncWebParameter* p = request->getParam(i);
         if(p->isPost()){
           // HTTP POST name value
-          Serial.println(p->name());
+          ESP_LOGD(TAG, "%s", p->name());
           if (p->name() == PARAM_DEVICE_NAME) {
             name = p->value().c_str();
-            Serial.print("Name set to: ");
-            Serial.println(name);
+            ESP_LOGD(TAG, "Name set to: %s", name);
             // Write file to save value
             //writeFile(SPIFFS, namePath, name.c_str());
             fileSystem.saveToFile(namePath, name);            
           }
           // HTTP POST relay value
-          for (int i=0; i<4;i ++){
+          Serial.println(p->name());
+          for (int i=0; i<RELAYS;i ++){
+            bool saveIt = false;
             if (p->name() == relays[i].getShortName()) {
-              relays[i].relayName = p->value().c_str();
-              Serial.print(relays[i].getFixedName() + " set to: ");
-              Serial.println(relays[i].relayName);
-              // Write file to save value
-              //writeFile(SPIFFS, relays[i].getRelayPath().c_str(), relays[i].relayName.c_str());
-              fileSystem.saveToFile(relays[i].getRelayPath().c_str(), relays[i].relayName);
+              if (relays[i].relayName != p->value().c_str()){
+                saveIt = true;
+                relays[i].relayName = p->value().c_str();
+              }
+            }
+            if (p->name() == String(relays[i].getShortName()+"-duration")){
+              if (relays[i].getMomentaryDurationInSeconds() != p->value().toInt()){
+                saveIt = true;
+                relays[i].setMomentaryDuration(p->value().toInt());
+              }
+            }
+            if (saveIt) {
+                ESP_LOGD(TAG, "Writing file for %s", relays[i].getFixedName());
+                Serial.println("Relay :" +  relays[i].getFixedName() + " json data: " + relays[i].toRawJson());
+                fileSystem.saveToFile(relays[i].getRelayPath().c_str(), relays[i].toRawJson().c_str());
             }
           }
         }
@@ -293,29 +287,29 @@ void setup() {
         inputMessage1 = request->getParam("output")->value();
         inputMessage2 = request->getParam("state")->value();
         findSetRelay(inputMessage1, inputMessage2.toInt());
-      //Tell the other clients.
+        //Tell the other clients.
         if (events.count()>1){
           events.send(inputMessage2.c_str(), inputMessage1.c_str(), millis());
         }
-
-      }
-      else {
+      } else if (request->hasParam("saverelaystates")) {
+        //Save all of the relays
+        ESP_LOGD(TAG, "saveRelayState received");
+        for (int i=0;i<RELAYS; i++)
+          fileSystem.saveToFile(relays[i].getRelayPath().c_str(), relays[i].toRawJson().c_str());            
+                
+      } else {
         inputMessage1 = "No message sent";
         inputMessage2 = "No message sent";
       }
-      Serial.print("Relay: ");
-      Serial.print(inputMessage1);
-      Serial.print(" - Set to: ");
-      Serial.println(inputMessage2);
+      ESP_LOGD(TAG, "Relay: %s - set to: %s",inputMessage1, inputMessage2);
       request->send(200, "text/plain", "OK");
-  });
+    });
 
     server.addHandler(&events);    
     server.begin();
-  }
-  else {
+  } else {
     // Connect to Wi-Fi network with SSID and password
-    Serial.println("Setting AP (Access Point)");
+    ESP_LOGD(TAG, "Setting AP (Access Point)");
     // NULL sets an open Access Point
     if (name != "")
       WiFi.softAP(name.c_str(), NULL);
@@ -323,8 +317,7 @@ void setup() {
       WiFi.softAP("ESP-WIFI-MANAGER", NULL);
 
     IPAddress IP = WiFi.softAPIP();
-    Serial.print("AP IP address: ");
-    Serial.println(IP); 
+    ESP_LOGD(TAG, "AP IP address: %s", IP); 
 
     // Web Server Root URL
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -341,31 +334,25 @@ void setup() {
           // HTTP POST name value
           if (p->name() == PARAM_DEVICE_NAME) {
             name = p->value().c_str();
-            Serial.print("Name set to: ");
-            Serial.println(name);
+            ESP_LOGD(TAG, "Name set to: %s", name);
             // Write file to save value
-            //writeFile(SPIFFS, namePath, name.c_str());
             fileSystem.saveToFile(namePath, name);
           }
           // HTTP POST ssid value
           if (p->name() == PARAM_SSID) {
             ssid = p->value().c_str();
-            Serial.print("SSID set to: ");
-            Serial.println(ssid);
+            ESP_LOGD(TAG, "SSID set to: %s", ssid);
             // Write file to save value
-            //writeFile(SPIFFS, ssidPath, ssid.c_str());
             fileSystem.saveToFile(ssidPath, ssid);
           }
           // HTTP POST pass value
           if (p->name() == PARAM_PASS) {
             pass = p->value().c_str();
-            Serial.print("Password set to: ");
-            Serial.println(pass);
+            ESP_LOGD(TAG, "Password set to: %s", pass);
             // Write file to save value
-            //writeFile(SPIFFS, passPath, pass.c_str());
             fileSystem.saveToFile(passPath, pass);            
           }
-          //Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+          //ESP_LOGD(TAG, "POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
         }
       }
       request->send(200, "text/plain", "Done. ESP will restart, connect to your router on your network");
@@ -381,19 +368,11 @@ unsigned long lastTime = 0;
 unsigned long timerDelay = 30000;
 
 void loop() {
- if ((millis() - lastTime) > timerDelay) {
-  //is anybody receiving events?
-  if (events.count()>0){
-
-      bool nowState = digitalRead(relays[0].getRelayPin());
-      if (nowState) {
-        Serial.println("Relay 1 off");
-        relays[0].setRelay(!nowState);
-        // Send Event to the Web Client(s)
-        events.send(String(!nowState).c_str(), relays[0].getShortName().c_str(),millis());
+  for (int i=0; i<RELAYS; i++){
+    if (relays[i].loop()){
+      if (events.count()>0){
+        events.send(String(relays[i].currentState()).c_str(), relays[i].getShortName().c_str(),millis());
       }
-  }
-    
-    lastTime = millis();
+    }
   }
 }

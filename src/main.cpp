@@ -10,8 +10,13 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <ArduinoJson.h>
 #include <Effortless_SPIFFS.h>
 #include <esp_log.h>
-#include "relayInformation.h"
 #include "secrets.h"
+#include "LilygoRelays.hpp"
+
+#include "SensorPCF8563.hpp"
+#include <esp_sntp.h>
+#include <AceButton.h>
+
 
 static const char* TAG = "RelayControl";
 
@@ -35,6 +40,7 @@ String pass;
 const char* namePath = "/name.txt";
 const char* ssidPath = "/ssid.txt";
 const char* passPath = "/pass.txt";
+const char* relayPath = "/relays.txt";
 
 // Timer variables
 unsigned long previousMillis = 0;
@@ -46,20 +52,25 @@ const int ledPin = LED_PIN;
 // Stores LED state
 String ledState;
 
-relayInformation relays[RELAYS] ={
-  relayInformation(1, RELAY1_PIN, "Relay 1", 2),
-  relayInformation(2, RELAY2_PIN, "Relay 2"),
-  relayInformation(3, RELAY3_PIN, "Relay 3"),
-#if RELAYS<=4
-  relayInformation(4, RELAY4_PIN, "Relay 4")
-#else
-  relayInformation(4, RELAY4_PIN, "Relay 4"),
-  relayInformation(5, RELAY5_PIN, "Relay 5"),
-  relayInformation(6, RELAY6_PIN, "Relay 6"),
-  relayInformation(7, RELAY7_PIN, "Relay 7"),
-  relayInformation(8, RELAY8_PIN, "Relay 8")
-#endif
-};
+using namespace ace_button;
+
+#define I2C_SDA                     16
+#define I2C_SCL                     17
+#define RTC_IRQ                     15
+
+#define SAVE_DELAY                  2000 // Delay to wait after a save was requested in case we get a bunch quickly
+
+SensorPCF8563 rtc;
+uint32_t lastMillis;
+uint32_t lastSaveRequestTime;
+
+const char *ntpServer1 = "pool.ntp.org";
+const char *ntpServer2 = "time.nist.gov";
+
+AceButton boot;
+uint8_t state = 0;
+
+LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo6Relays,2);
 
 
 // Create a eSPIFFS class
@@ -71,7 +82,96 @@ relayInformation relays[RELAYS] ={
   eSPIFFS fileSystem(&Serial);  // Optional - allow the methods to print debug
 #endif
 
+// Callback function (get's called when time adjusts via NTP)
+void timeavailable(struct timeval *t)
+{
+    Serial.println("Got time adjustment from NTP!");
+    // printLocalTime();
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        Serial.println("No time available (yet)");
+        return;
+    }
+    rtc.hwClockWrite();
+}
 
+void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
+{
+    if (eventType != AceButton::kEventPressed) {
+        return;
+    }
+    Serial.printf("[AceButton][%u]  N:%d E:%u S:%u state:%d\n", millis(), n->getId(), buttonState, buttonState, state);
+
+    switch (state) {
+    case 0:
+        //control.setAllHigh();
+        for (int i=0; i<relays.numberOfRelays();i++)
+          relays[i].setRelayStatus(HIGH);
+        if (events.count()>0){
+          events.send("1", "allRelays",millis());
+        }        
+        //Serial.println(relays.asRawJson());
+        break;
+    case 1:
+        //control.setAllLow();
+        for (int i=0; i<relays.numberOfRelays();i++)
+          relays[i].setRelayStatus(LOW);
+        if (events.count()>0){
+          events.send("0", "allRelays",millis());
+        }
+        break;
+    case 2:
+        // setting single pins
+        for (int i=0; i<relays.numberOfRelays();i++){
+          relays[i].setRelayStatus(HIGH);
+          delay(250);
+        }
+        break;
+    case 3:
+        // setting single pins
+        for (int i=0; i<relays.numberOfRelays();i++){
+          relays[i].setRelayStatus(LOW);
+          delay(250);
+        }
+      break;
+    default:
+        break;
+    }
+    state++;
+    state %= 4;
+}
+
+String configHTML(int index){
+  return 
+      String("<div class=\"relay-section\">")
+    + String("<h3>" + relays[index].getRelayFixedName() + "</h3>")
+    + String(   "<div class=\"relay-item\">")
+    + String(     "<label for=\"" + relays[index].getRelayFixedShortName() + "\">Name:</label>")
+    + String(     "<input type=\"text\" id=\""+ relays[index].getRelayFixedShortName() + "\" name=\"" + relays[index].getRelayFixedShortName() + "\" value=\"" + relays[index].relayName + "\" maxlength=\"25\">")
+    + String(   "</div>")
+    + String(   "<div class=\"relay-item\">")
+    + String(     "<label for=\"" + relays[index].getRelayFixedShortName() + "-duration\">Duration:</label>")
+    + String(     "<input type=\"number\" id=\"" + relays[index].getRelayFixedShortName() + "-duration\" name=\"" + relays[index].getRelayFixedShortName() + "-duration\" value=\"" + relays[index].momentaryDuration + "\" maxlength=\"4\">")
+    + String(   "</div>")
+    + String( "</div>");
+}
+
+String actionHTML(int index){
+  return 
+    String("<div class=\"relay-item\">") +
+    String(   "<label class=\"switch\">") +
+    String(     "<input type=\"checkbox\" id=\"" + relays[index].getRelayFixedShortName() + "\" onchange=\"toggleCheckbox(this)\" " + String(relays[index].getRelayStatus()==1?"checked":"") + ">") +
+    String(     "<span class=\"slider\"></span>") +
+    String(   "</label>") +
+    String(   "<span class=\"relay-name\">" + relays[index].relayName + "</span>") +
+    String( "</div>");
+};
+
+String eventListenerJS(int index){
+   return "source.addEventListener('" + relays[index].getRelayFixedShortName() + "', function(e) {" +
+          "console.log(\"" + relays[index].getRelayFixedShortName() + "\", e.data);" +
+          "document.getElementById(\"" + relays[index].getRelayFixedShortName() + "\").checked = (e.data?.toLowerCase()?.trim()==\"1\");}, false);";
+};
 
 String processor(const String& replacementString){
   ESP_LOGD(TAG, "In Processor");
@@ -86,18 +186,16 @@ String processor(const String& replacementString){
     String(    "<label for=\"input1\">Name:</label>") +
     String(    "<input type=\"text\" id=\"name\" name=\"name\" value=\"" + name + "\" maxlength=\"25\">") +
     String("</div><br>");
-
-//      "<label for=\"name\">Name</label><input type=\"text\" id =\"name\" name=\"name\"   value=\"" + name + "\"><br>";
-    for (int i = 0; i<RELAYS; i++) {
-      retString += relays[i].configHTML();
+    for (int i = 0; i<relays.numberOfRelays(); i++) {
+      retString += configHTML(i);
     }
     return retString;
   }
   else if (replacementString == "RELAYSWITCHES") {
     ESP_LOGD(TAG, "RELAYSWITCHES");
     String retString = "";
-    for (int i = 0; i<RELAYS; i++) {
-       retString += relays[i].actionHTML();
+    for (int i = 0; i<relays.numberOfRelays(); i++) {
+       retString += actionHTML(i);
     }
     retString +="<button class=\"save-button\" onclick=\"saveStates(this)\">Save States</button>";
     return retString;
@@ -105,8 +203,8 @@ String processor(const String& replacementString){
   else if (replacementString == "RELAYEVENTLISTENERS") {
     ESP_LOGD(TAG, "RELAYEVENTLISTENERS");
     String retString;
-    for (int i = 0; i<RELAYS; i++) {
-      retString += relays[i].eventListenerJS();
+    for (int i = 0; i<relays.numberOfRelays(); i++) {
+      retString += eventListenerJS(i);
     }
     return retString;
   }
@@ -117,9 +215,9 @@ String processor(const String& replacementString){
 
 void findSetRelay(String rname, int  val){
   ESP_LOGD(TAG, "In findSetRelay relay = %s val= %d", rname, val);
-  for (int i=0; i<RELAYS; i++){
-    if (rname==relays[i].getShortName()) {
-      relays[i].setRelay(val);
+  for (int i=0; i<relays.numberOfRelays(); i++){
+    if (rname==relays[i].getRelayFixedShortName()) {
+      relays[i].setRelayStatus(val);
     }
   }
 }
@@ -150,9 +248,50 @@ bool initWiFi() {
   return true;
 }
 
+void relayUpdated(int relay, int value){
+  //Serial.print("Relay Updated ");
+  //Serial.print(relay);
+  //Serial.print(" value=");
+  //Serial.println(value);
+  if (events.count()>0){
+    events.send(String(value).c_str(), relays[relay].getRelayFixedShortName().c_str(),millis());
+  }
+}
+
 void setup() {
+
+
+#ifdef RTC_IRQ
+  pinMode(RTC_IRQ, INPUT_PULLUP);
+#endif
+
   // Serial port for debugging purposes
   Serial.begin(115200);
+  Serial.println("Booted");
+
+  relays.initialize();
+  relays.setRelayUpdateCallback(relayUpdated);
+  
+  const uint8_t boot_pin = 0;
+  pinMode(boot_pin, INPUT_PULLUP);
+  boot.init(boot_pin, HIGH, 0);
+  ButtonConfig *buttonConfig = boot.getButtonConfig();
+  buttonConfig->setEventHandler(ButtonHandleEvent);
+  buttonConfig->setFeature(ButtonConfig::kFeatureClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
+  buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+  buttonConfig->setLongPressDelay(5000);
+
+  for (int i=0; i<5; i++){
+    if (!rtc.begin(Wire, PCF8563_SLAVE_ADDRESS, I2C_SDA, I2C_SCL)) {
+        Serial.println("Failed to find PCF8563 - check your wiring!");
+        delay(1000);
+    } else {
+        Serial.println("Found PCF8563!");
+        break;
+    }
+  }
+
 
   // Create a eSPIFFS class
   #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
@@ -166,8 +305,8 @@ void setup() {
 
 
   // Set LED as an OUTPUT
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, LOW);
+  //pinMode(ledPin, OUTPUT);
+  //digitalWrite(ledPin, LOW);
 
 
   // Load values saved in SPIFFS
@@ -188,33 +327,50 @@ void setup() {
   }
 
   //Read in the names, and if they are not there, use the defaults already stored in the relay object
-  String rawJson;
-  relayInformation tempRelay;
-  for (int i=0; i<RELAYS;i++){
-    rawJson="";
-    fileSystem.openFromFile(relays[i].getRelayPath().c_str(),rawJson);
-    if (rawJson!=""){
-      Serial.println(rawJson);
-      relayInformation tempRelay = relays[i];
-      relays[i] = relayInformation(rawJson);
-      if (relays[i].getErrorCondition()==-1){
-        ESP_LOGE(TAG, "relay from json data failed");
-        relays[i] = tempRelay;
-      }
-    } 
-  }  
+  // String rawJson;
+  // relayInformation tempRelay;
+  // for (int i=0; i<relays.numberOfRelays();i++){
+  //   rawJson="";
+  //   fileSystem.openFromFile(relays[i].getRelayPath().c_str(),rawJson);
+  //   if (rawJson!=""){
+  //     Serial.println(rawJson);
+  //     relayInformation tempRelay = relays[i];
+  //     relays[i] = relayInformation(rawJson);
+  //     if (relays[i].getErrorCondition()==-1){
+  //       ESP_LOGE(TAG, "relay from json data failed");
+  //       relays[i] = tempRelay;
+  //     }
+  //   } 
+  // }  
 
-  for (int i=0; i<RELAYS;i++){
-    relays[i].relayInit();
-  }
+  // for (int i=0; i<relays.numberOfRelays();i++){
+  //   relays[i].relayInit();
+  // }
 
   ESP_LOGD(TAG, "%s", ssid);
   //ESP_LOGD(TAG, "%s", pass);
-  for (int i=0; i<RELAYS;i++){
+  for (int i=0; i<relays.numberOfRelays();i++){
     ESP_LOGD(TAG, "%s", relays[i].relayName);
   }
 
   if(initWiFi()) {
+
+#ifdef RELAYSHIFT
+    // set notification call-back function
+    sntp_set_time_sync_notification_cb( timeavailable );
+
+    /**
+     * A more convenient approach to handle TimeZones with daylightOffset
+     * would be to specify a environmnet variable with TimeZone definition including daylight adjustmnet rules.
+     * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
+     */
+    configTzTime("EST5EDT,M3.2.0,M11.1.0", ntpServer1, ntpServer2);
+    //configTzTime("CST-8", ntpServer1, ntpServer2);
+
+
+#endif
+
+
     // Route for root / web page
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
       request->send(SPIFFS, "/index.html", "text/html", false, processor);
@@ -239,6 +395,7 @@ void setup() {
     server.on("/relayconfig", HTTP_POST, [](AsyncWebServerRequest *request) {
       ESP_LOGD(TAG, "caught post");
       int params = request->params();
+      bool saveIt = false; //did anything change?
       for(int i=0;i<params;i++){
         AsyncWebParameter* p = request->getParam(i);
         if(p->isPost()){
@@ -252,28 +409,25 @@ void setup() {
             fileSystem.saveToFile(namePath, name);            
           }
           // HTTP POST relay value
-          Serial.println(p->name());
-          for (int i=0; i<RELAYS;i ++){
-            bool saveIt = false;
-            if (p->name() == relays[i].getShortName()) {
+          for (int i=0; i<relays.numberOfRelays();i ++){
+            if (p->name() == relays[i].getRelayFixedShortName()) {
               if (relays[i].relayName != p->value().c_str()){
                 saveIt = true;
-                relays[i].relayName = p->value().c_str();
+                relays[i].relayName = p->value();
               }
             }
-            if (p->name() == String(relays[i].getShortName()+"-duration")){
-              if (relays[i].getMomentaryDurationInSeconds() != p->value().toInt()){
+            if (p->name() == String(relays[i].getRelayFixedShortName()+"-duration")){
+              if (relays[i].momentaryDuration != p->value().toInt()){
                 saveIt = true;
-                relays[i].setMomentaryDuration(p->value().toInt());
+                relays[i].momentaryDuration = p->value().toInt();
               }
-            }
-            if (saveIt) {
-                ESP_LOGD(TAG, "Writing file for %s", relays[i].getFixedName());
-                Serial.println("Relay :" +  relays[i].getFixedName() + " json data: " + relays[i].toRawJson());
-                fileSystem.saveToFile(relays[i].getRelayPath().c_str(), relays[i].toRawJson().c_str());
             }
           }
         }
+      }
+      if (saveIt) {
+        ESP_LOGD(TAG, "Requesting Save");
+        lastSaveRequestTime = millis();
       }
       request->redirect("/");
     });
@@ -282,7 +436,6 @@ void setup() {
     server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
       String inputMessage1;
       String inputMessage2;
-      // GET input1 value on <ESP_IP>/update?output=<inputMessage1>&state=<inputMessage2>
       if (request->hasParam("output") && request->hasParam("state")) {
         inputMessage1 = request->getParam("output")->value();
         inputMessage2 = request->getParam("state")->value();
@@ -294,14 +447,15 @@ void setup() {
       } else if (request->hasParam("saverelaystates")) {
         //Save all of the relays
         ESP_LOGD(TAG, "saveRelayState received");
-        for (int i=0;i<RELAYS; i++)
-          fileSystem.saveToFile(relays[i].getRelayPath().c_str(), relays[i].toRawJson().c_str());            
+        for (int i=0; i<relays.numberOfRelays(); i++){
+          relays[i].startState = relays[i].getRelayStatus();
+        }
+        lastSaveRequestTime = millis(); //request a save
                 
       } else {
         inputMessage1 = "No message sent";
         inputMessage2 = "No message sent";
       }
-      ESP_LOGD(TAG, "Relay: %s - set to: %s",inputMessage1, inputMessage2);
       request->send(200, "text/plain", "OK");
     });
 
@@ -368,11 +522,27 @@ unsigned long lastTime = 0;
 unsigned long timerDelay = 30000;
 
 void loop() {
-  for (int i=0; i<RELAYS; i++){
-    if (relays[i].loop()){
-      if (events.count()>0){
-        events.send(String(relays[i].currentState()).c_str(), relays[i].getShortName().c_str(),millis());
-      }
-    }
+
+  boot.check();
+  relays.loop();
+
+  if (lastSaveRequestTime!=-1 and (lastSaveRequestTime+SAVE_DELAY<millis())) {
+    lastSaveRequestTime = -1;
+    ESP_LOGD(TAG,"Save was requested");
+    Serial.println("Relays json data:" +  relays.asRawJson());
+  }
+
+  if (millis() - lastMillis > 3000) {
+
+      lastMillis = millis();
+
+      RTC_DateTime datetime = rtc.getDateTime();
+      // Serial.printf(" Year :"); Serial.print(datetime.year);
+      // Serial.printf(" Month:"); Serial.print(datetime.month);
+      // Serial.printf(" Day :"); Serial.print(datetime.day);
+      // Serial.printf(" Hour:"); Serial.print(datetime.hour);
+      // Serial.printf(" Minute:"); Serial.print(datetime.minute);
+      // Serial.printf(" Sec :"); Serial.println(datetime.second);
+
   }
 }

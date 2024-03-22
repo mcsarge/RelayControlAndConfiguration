@@ -31,11 +31,20 @@
        source.addEventListener('message', function(e) {
         console.log("message", e.data);
        }, false);
+
+       source.addEventListener('allRelays', function(e) {
+        console.log("allRelays", e.data);
+        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+        const checked = (e.data?.toLowerCase()?.trim()=="1");
+        checkboxes.forEach(checkbox => {
+          checkbox.checked = checked;});
+       }, false);
        
        %RELAYEVENTLISTENERS%
        
+
       }
-      function toggleCheckbox(element) {
+       function toggleCheckbox(element) {
         var xhr = new XMLHttpRequest();
         if(element.checked){ xhr.open("GET", "/update?output="+element.id+"&state=1", true); }
         else { xhr.open("GET", "/update?output="+element.id+"&state=0", true); }

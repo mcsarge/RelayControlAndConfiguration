@@ -13,9 +13,11 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <SensorPCF8563.hpp>
 #include <esp_sntp.h>
 #include <AceButton.h>
+#include <ElegantOTA.h>
+#include "OTAStuff.h"
 #include "secrets.h"
 #include "LilygoRelays.hpp"
-#include <ElegantOTA.h>
+#include "WebStuff.h"
 
 static const char* TAG = "RelayControl";
 
@@ -56,8 +58,6 @@ using namespace ace_button;
 SensorPCF8563 rtc;
 uint32_t lastMillis;
 uint32_t lastSaveRequestTime=-1;
-
-unsigned long ota_progress_millis = 0;
 
 const char *ntpServer1 = "pool.ntp.org";
 const char *ntpServer2 = "time.nist.gov";
@@ -137,62 +137,16 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
 }
 
 
-void onOTAStart() {
-  // Log when OTA has started
-  Serial.println("OTA update started!");
-  // <Add your own code here>
-}
-
-void onOTAProgress(size_t current, size_t final) {
-  // Log every 1 second
-  if (millis() - ota_progress_millis > 1000) {
-    ota_progress_millis = millis();
-    Serial.printf("OTA Progress Current: %u bytes, Final: %u bytes\n", current, final);
+void findSetRelay(String rname, int  val){
+  ESP_LOGD(TAG, "In findSetRelay relay = %s val= %d", rname, val);
+  //relays[rname].setRelayStatus(val);
+  for (int i=0; i<relays.numberOfRelays(); i++){
+    if (rname==relays[i].getRelayFixedShortName()) {
+      relays[i].setRelayStatus(val);
+    }
   }
 }
 
-void onOTAEnd(bool success) {
-  // Log when OTA has finished
-  if (success) {
-    Serial.println("OTA update finished successfully!");
-  } else {
-    Serial.println("There was an error during OTA update!");
-  }
-  // <Add your own code here>
-}
-
-
-String configHTML(int index){
-  return 
-      String("<div class=\"relay-section\">")
-    + String("<h3>" + relays[index].getRelayFixedName() + "</h3>")
-    + String(   "<div class=\"relay-item\">")
-    + String(     "<label for=\"" + relays[index].getRelayFixedShortName() + "\">Name:</label>")
-    + String(     "<input type=\"text\" id=\""+ relays[index].getRelayFixedShortName() + "\" name=\"" + relays[index].getRelayFixedShortName() + "\" value=\"" + relays[index].relayName + "\" maxlength=\"25\">")
-    + String(   "</div>")
-    + String(   "<div class=\"relay-item\">")
-    + String(     "<label for=\"" + relays[index].getRelayFixedShortName() + "-duration\">Duration:</label>")
-    + String(     "<input type=\"number\" id=\"" + relays[index].getRelayFixedShortName() + "-duration\" name=\"" + relays[index].getRelayFixedShortName() + "-duration\" value=\"" + relays[index].momentaryDuration + "\" maxlength=\"4\">")
-    + String(   "</div>")
-    + String( "</div>");
-}
-
-String actionHTML(int index){
-  return 
-    String("<div class=\"relay-item\">") +
-    String(   "<label class=\"switch\">") +
-    String(     "<input type=\"checkbox\" id=\"" + relays[index].getRelayFixedShortName() + "\" onchange=\"toggleCheckbox(this)\" " + String(relays[index].getRelayStatus()==1?"checked":"") + ">") +
-    String(     "<span class=\"slider\"></span>") +
-    String(   "</label>") +
-    String(   "<span class=\"relay-name\">" + relays[index].relayName + "</span>") +
-    String( "</div>");
-};
-
-String eventListenerJS(int index){
-   return "source.addEventListener('" + relays[index].getRelayFixedShortName() + "', function(e) {" +
-          "console.log(\"" + relays[index].getRelayFixedShortName() + "\", e.data);" +
-          "document.getElementById(\"" + relays[index].getRelayFixedShortName() + "\").checked = (e.data?.toLowerCase()?.trim()==\"1\");}, false);";
-};
 
 String processor(const String& replacementString){
   ESP_LOGD(TAG, "In Processor");
@@ -208,7 +162,7 @@ String processor(const String& replacementString){
     String(    "<input type=\"text\" id=\"name\" name=\"name\" value=\"" + name + "\" maxlength=\"25\">") +
     String("</div><br>");
     for (int i = 0; i<relays.numberOfRelays(); i++) {
-      retString += configHTML(i);
+      retString += configHTML(relays[i]);
     }
     return retString;
   }
@@ -216,7 +170,7 @@ String processor(const String& replacementString){
     ESP_LOGD(TAG, "RELAYSWITCHES");
     String retString = "";
     for (int i = 0; i<relays.numberOfRelays(); i++) {
-       retString += actionHTML(i);
+       retString += actionHTML(relays[i]);
     }
     retString +="<button class=\"save-button\" onclick=\"saveStates(this)\">Save States</button>";
     return retString;
@@ -225,7 +179,7 @@ String processor(const String& replacementString){
     ESP_LOGD(TAG, "RELAYEVENTLISTENERS");
     String retString;
     for (int i = 0; i<relays.numberOfRelays(); i++) {
-      retString += eventListenerJS(i);
+      retString += eventListenerJS(relays[i]);
     }
     return retString;
   }
@@ -234,14 +188,6 @@ String processor(const String& replacementString){
   return "";
 }
 
-void findSetRelay(String rname, int  val){
-  ESP_LOGD(TAG, "In findSetRelay relay = %s val= %d", rname, val);
-  for (int i=0; i<relays.numberOfRelays(); i++){
-    if (rname==relays[i].getRelayFixedShortName()) {
-      relays[i].setRelayStatus(val);
-    }
-  }
-}
 
 // Initialize WiFi
 bool initWiFi() {

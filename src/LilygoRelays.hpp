@@ -28,10 +28,13 @@
  *
  */
 
+
 #include <Arduino.h>
 #include "LilygoRelaysConstants.h"
 #include <ShiftRegister74HC595_NonTemplate.h>
 #include <ArduinoJson.h>
+
+#pragma once
 
 class LilygoRelays
 {
@@ -282,7 +285,7 @@ public:
         return true;
     }
 
-    lilygoRelay& operator[](const char* key) {
+    lilygoRelay& operator[](String key) {
         for (int i = 0; i<__numberOfRelays; i++){
             if (__relays[i].relayName==key){
                 return __relays[i];    

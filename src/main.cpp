@@ -10,13 +10,12 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <ArduinoJson.h>
 #include <Effortless_SPIFFS.h>
 #include <esp_log.h>
-#include "secrets.h"
-#include "LilygoRelays.hpp"
-
-#include "SensorPCF8563.hpp"
+#include <SensorPCF8563.hpp>
 #include <esp_sntp.h>
 #include <AceButton.h>
-
+#include "secrets.h"
+#include "LilygoRelays.hpp"
+#include <ElegantOTA.h>
 
 static const char* TAG = "RelayControl";
 
@@ -46,12 +45,6 @@ const char* relayPath = "/relays.txt";
 unsigned long previousMillis = 0;
 const long interval = 10000;  // interval to wait for Wi-Fi connection (milliseconds)
 
-// Set LED GPIO
-const int ledPin = LED_PIN;
-
-// Stores LED state
-String ledState;
-
 using namespace ace_button;
 
 #define I2C_SDA                     16
@@ -62,7 +55,9 @@ using namespace ace_button;
 
 SensorPCF8563 rtc;
 uint32_t lastMillis;
-uint32_t lastSaveRequestTime;
+uint32_t lastSaveRequestTime=-1;
+
+unsigned long ota_progress_millis = 0;
 
 const char *ntpServer1 = "pool.ntp.org";
 const char *ntpServer2 = "time.nist.gov";
@@ -101,16 +96,16 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
         return;
     }
     Serial.printf("[AceButton][%u]  N:%d E:%u S:%u state:%d\n", millis(), n->getId(), buttonState, buttonState, state);
-
     switch (state) {
     case 0:
         //control.setAllHigh();
         for (int i=0; i<relays.numberOfRelays();i++)
           relays[i].setRelayStatus(HIGH);
+        relays.setLEDStatus(HIGH,LilygoRelays::GreenLED,100,100);
+        relays.setLEDStatus(HIGH,LilygoRelays::RedLED,1000,1000);
         if (events.count()>0){
           events.send("1", "allRelays",millis());
         }        
-        //Serial.println(relays.asRawJson());
         break;
     case 1:
         //control.setAllLow();
@@ -133,13 +128,39 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
           relays[i].setRelayStatus(LOW);
           delay(250);
         }
-      break;
+     break;
     default:
         break;
     }
     state++;
     state %= 4;
 }
+
+
+void onOTAStart() {
+  // Log when OTA has started
+  Serial.println("OTA update started!");
+  // <Add your own code here>
+}
+
+void onOTAProgress(size_t current, size_t final) {
+  // Log every 1 second
+  if (millis() - ota_progress_millis > 1000) {
+    ota_progress_millis = millis();
+    Serial.printf("OTA Progress Current: %u bytes, Final: %u bytes\n", current, final);
+  }
+}
+
+void onOTAEnd(bool success) {
+  // Log when OTA has finished
+  if (success) {
+    Serial.println("OTA update finished successfully!");
+  } else {
+    Serial.println("There was an error during OTA update!");
+  }
+  // <Add your own code here>
+}
+
 
 String configHTML(int index){
   return 
@@ -267,9 +288,11 @@ void setup() {
 
   // Serial port for debugging purposes
   Serial.begin(115200);
+  delay(200);
   Serial.println("Booted");
 
   relays.initialize();
+  Serial.println(relays.numberOfLEDs());
   relays.setRelayUpdateCallback(relayUpdated);
   
   const uint8_t boot_pin = 0;
@@ -302,12 +325,6 @@ void setup() {
       ESP.restart();
     }
   #endif
-
-
-  // Set LED as an OUTPUT
-  //pinMode(ledPin, OUTPUT);
-  //digitalWrite(ledPin, LOW);
-
 
   // Load values saved in SPIFFS
   fileSystem.openFromFile(namePath, name);
@@ -353,9 +370,17 @@ void setup() {
     ESP_LOGD(TAG, "%s", relays[i].relayName);
   }
 
+     // Set Authentication Credentials
+    ElegantOTA.setAuth("admin", "aabbcc112233");
+    // ElegantOTA callbacks
+    ElegantOTA.onStart(onOTAStart);
+    ElegantOTA.onProgress(onOTAProgress);
+    ElegantOTA.onEnd(onOTAEnd);
+    
+
+
   if(initWiFi()) {
 
-#ifdef RELAYSHIFT
     // set notification call-back function
     sntp_set_time_sync_notification_cb( timeavailable );
 
@@ -366,9 +391,6 @@ void setup() {
      */
     configTzTime("EST5EDT,M3.2.0,M11.1.0", ntpServer1, ntpServer2);
     //configTzTime("CST-8", ntpServer1, ntpServer2);
-
-
-#endif
 
 
     // Route for root / web page
@@ -433,7 +455,7 @@ void setup() {
     });
 
     // Send a GET request to <ESP_IP>/update?output=<inputMessage1>&state=<inputMessage2>
-    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    server.on("/relayupdate", HTTP_GET, [] (AsyncWebServerRequest *request) {
       String inputMessage1;
       String inputMessage2;
       if (request->hasParam("output") && request->hasParam("state")) {
@@ -459,8 +481,11 @@ void setup() {
       request->send(200, "text/plain", "OK");
     });
 
+    ElegantOTA.begin(&server);    // Start ElegantOTA
+
     server.addHandler(&events);    
     server.begin();
+  
   } else {
     // Connect to Wi-Fi network with SSID and password
     ESP_LOGD(TAG, "Setting AP (Access Point)");
@@ -513,6 +538,8 @@ void setup() {
       delay(3000);
       ESP.restart();
     });
+
+    ElegantOTA.begin(&server);    // Start ElegantOTA
     server.begin();
   }
 }
@@ -522,7 +549,8 @@ unsigned long lastTime = 0;
 unsigned long timerDelay = 30000;
 
 void loop() {
-
+  
+  ElegantOTA.loop();
   boot.check();
   relays.loop();
 

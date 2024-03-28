@@ -42,9 +42,13 @@ public:
         Lilygo6Relays
     } RelayType;
 
+    typedef enum {
+        RedLED = 0,
+        GreenLED =1
+    } LEDType;
+
         class lilygoRelay
         {
-
         public:
 
             String relayName;
@@ -131,13 +135,14 @@ public:
 
         };
 
-
     LilygoRelays()
     {
         __relayType = Lilygo4Relays;
         __banks = 1;
         __numberOfRelays = 4;
+        __numberOfLEDs = 1;
         __relaysPerBank = 4;
+        __ledsPerBank = 1;
         this->__relayUpdatedCB = NULL;
 
         //__relays = (relayArray*)malloc(sizeof(singleRelay)*__numberOfRelays);
@@ -146,7 +151,7 @@ public:
         __relays[1].relayAddress = LILYGORELAY4_RELAY2_PIN;
         __relays[2].relayAddress = LILYGORELAY4_RELAY3_PIN;
         __relays[3].relayAddress = LILYGORELAY4_RELAY4_PIN;
-
+        
         //Set other default values.
         for (int relay=0;relay<__numberOfRelays; relay++){
             __relays[relay].relayName = "Relay " + String(relay+1); //Names start at 1.
@@ -154,8 +159,6 @@ public:
             //__relays[relay].setLastSetMillis = 0;
             __relays[relay].startState = 0;
         }
-
-
     }
 
     LilygoRelays(RelayType relayType, int banks=1)
@@ -166,6 +169,7 @@ public:
 
         if (relayType == Lilygo6Relays){
             __relaysPerBank = 6;
+
             if ((banks <= LILYGORELAY6_BANKS_MAX) && (banks >= LILYGORELAY6_BANKS_MIN)){
                 __banks = banks;
             }
@@ -175,7 +179,7 @@ public:
             for (int bank=0;bank<__banks; bank++){
                 for (int relay=0; relay<__relaysPerBank;relay++){
                     int bankRelayNumber = bank*8+relay; //each bank has 8 spots, the last 2 are for the LEDs. need to skip them
-                    int relayNumber = bank*6+relay; //each bank has 8 spots, the last 2 are for the LEDs. need to skip them
+                    int relayNumber = bank*__relaysPerBank+relay; //each bank has 8 spots, the last 2 are for the LEDs. need to skip them
                     __relays[relayNumber].relayAddress = bankRelayNumber;
                 }
             }
@@ -183,6 +187,7 @@ public:
         } else if (relayType == Lilygo4Relays) {
             __numberOfRelays = 4;
             __relaysPerBank = 4;
+            __ledsPerBank = 1;
             __relays = new lilygoRelay[__numberOfRelays];
             //set the relay address
             __relays[0].relayAddress = LILYGORELAY4_RELAY1_PIN;
@@ -209,14 +214,12 @@ public:
         for (int relay=0;relay<__numberOfRelays; relay++){
             __relays[relay].relayName = "Relay " + String(relay+1); //Names start at 1.
             __relays[relay].momentaryDuration = -1;
-            //__relays[relay].lastSetMillis = 0;
             __relays[relay].startState = 0;
             __relays[relay].setOuter(this);
             __relays[relay].index=relay;
         }
         __initialized = true;
     }
-
 
     LilygoRelays(String rawJson){
         JsonDocument doc;
@@ -266,12 +269,16 @@ public:
             //setup the shift register
             __control = new ShiftRegister74HC595_NonTemplate(8*__banks, LILYGORELAY6_SHIFT_DATA_PIN, LILYGORELAY6_SHIFT_CLOCK_PIN, LILYGORELAY6_SHIFT_LATCH_PIN);
             __control->setAllLow();
+    
+            setLEDStatus(__led_data[GreenLED].startState, GreenLED);
         }
 
         for (int relay=0;relay<__numberOfRelays; relay++){
             //__control->set(__relays[relay].getRelayAddress(),__relays[relay].startState);
             __relays[relay].setRelayStatus(__relays[relay].startState);
         }
+
+        setLEDStatus(__led_data[RedLED].startState);
         return true;
     }
 
@@ -291,13 +298,13 @@ public:
         return __relays[index];    
     }
 
-
     void loop(){
         for (int relay=0; relay <__numberOfRelays; relay++){
             if (__relays[relay].momentaryDuration>0 && __relays[relay].getRelayStatus()==1){
                 __relays[relay].loop();
             }
         }
+        ledLoop();
     }
 
     int numberOfRelays(){
@@ -319,6 +326,20 @@ public:
             r["duration"]=__relays[relay].momentaryDuration;
         }
 
+        JsonArray leds = doc["leds"].to<JsonArray>();
+        JsonObject rled = leds.add<JsonObject>();
+        rled["which"] = RedLED;
+        rled["on"] = __led_data[RedLED].on_duration;
+        rled["off"] =__led_data[RedLED].off_duration;
+        rled["start"] = __led_data[RedLED].startState;
+        if (__relayType==Lilygo6Relays){
+            JsonObject gled = leds.add<JsonObject>();
+            gled["which"] = GreenLED;
+            gled["on"] = __led_data[GreenLED].on_duration;
+            gled["off"] =__led_data[GreenLED].off_duration;
+            gled["start"] = __led_data[GreenLED].startState;
+        }
+
         String returnString;
         doc.shrinkToFit(); 
         serializeJson(doc,returnString);
@@ -326,39 +347,92 @@ public:
     }
 
 
+    int numberOfLEDs(){
+        if (__relayType==Lilygo6Relays)
+            return 2;
+        else 
+            return 1;
+    }
+
+    int getLEDStatus(LEDType whichLED=RedLED){
+        //Check for bad index or not initialized
+        if (__relayType==Lilygo6Relays){
+            return (__control->get(whichLED==RedLED?LILYGORELAY6_RLED_POS:LILYGORELAY6_GLED_POS));
+        } else {
+            return digitalRead(LILYGORELAY4OR8_RLED_PIN); //even if you ask for blue, you get red because there is only 1.
+        }
+    }
+
+    void setLEDStatus( int status, LEDType whichLED, unsigned long onTime, unsigned long offTime){
+        //Check for bad index or not initialized
+        if (__relayType!=Lilygo6Relays){
+            whichLED=RedLED;//If this is not a 6, we just set the single LED.
+        }
+        if (onTime != __led_data[whichLED].on_duration || offTime != __led_data[whichLED].off_duration){
+            __led_data[whichLED].on_duration = onTime;
+            __led_data[whichLED].off_duration = offTime;
+        }
+
+        if (getLEDStatus(whichLED) != status) {
+            __led_data[whichLED].last_set_time = millis();
+            if (__relayType==Lilygo6Relays){
+                __control->set(whichLED==RedLED?LILYGORELAY6_RLED_POS:LILYGORELAY6_GLED_POS, status==1?HIGH:LOW);
+            } else {
+                digitalWrite(LILYGORELAY4OR8_RLED_PIN, status==1?HIGH:LOW);
+            }
+        }
+    }
+
+    void setLEDStatus(int status, LEDType whichLED){
+        setLEDStatus(status, whichLED, __led_data[whichLED].on_duration, __led_data[whichLED].off_duration);
+    }
+
+    void setLEDStatus(int status){
+        setLEDStatus(status, RedLED, __led_data[RedLED].on_duration, __led_data[RedLED].off_duration);
+    }
+
 private:
-
-    // struct lilygoRelayInternal{
-    //     String relayName;
-    //     int startState = 0;
-    //     int relayAddress;
-    //     int32_t momentaryDuration = -1 ;
-    //     unsigned long lastSetMillis = 0;
-    // };
-
-    // Declare test_array_ptr as pointer to test_array
 
     bool                                __initialized = false;
     int                                 __relaysPerBank = 4;
+    int                                 __ledsPerBank = 1;
     int                                 __numberOfRelays = 4;
+    int                                 __numberOfLEDs = 1;
     RelayType                           __relayType = Lilygo4Relays;
     int                                 __banks = 1;
     lilygoRelay                         *__relays;
     ShiftRegister74HC595_NonTemplate    *__control;
     void (*__relayUpdatedCB)(int, int) = NULL;
 
+    typedef struct { 
+    long on_duration;
+    long off_duration;
+    unsigned long last_set_time;
+    int startState;
+    } ledDictionary;
+
+    ledDictionary __led_data[2] {
+        {-1,-1,0,0},
+        {-1,-1,0,0}
+    };
 
     friend class lilygoRelay;
 
-    bool initImpl()
-    {
-        return true;
+    void checkLED(LEDType theLED){
+        if (__led_data[theLED].on_duration>0){
+            if(__led_data[theLED].last_set_time+__led_data[theLED].on_duration<millis() ){
+                setLEDStatus(getLEDStatus(theLED)==1?0:1,theLED);
+            }
+        }
     }
 
-    int getReadMaskImpl()
-    {
-        return -1;
+    void ledLoop(){
+        if (__relayType==Lilygo6Relays){
+            checkLED(GreenLED);
+        }
+        checkLED(RedLED);
     }
+
 
 protected:
 

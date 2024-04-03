@@ -1,31 +1,76 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>ESP Wi-Fi Manager</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" type="text/css" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WiFi Manager</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+    }
+
+    .container {
+        margin: 50px auto;
+        width: 400px;
+        padding: 20px;
+        background-color: #f9f9f9;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    input[type="text"] {
+        width: calc(100% - 22px);
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+
+    input[type="submit"] {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        width: 100%;
+    }
+
+    input[type="submit"]:hover {
+        background-color: #45a049;
+    }
+</style>
 </head>
 <body>
-  <div class="topnav">
-    <h1>ESP Wi-Fi Manager</h1>
-  </div>
-  <div class="content">
-    <div class="card-grid">
-      <div class="card">
-        <form action="/" method="POST">
-          <p>
-            <label for="name">Name</label>
-            <input type="text" id ="name" name="name" value="Relay Control"><br>
-            <label for="ssid">SSID</label>
-            <input type="text" id ="ssid" name="ssid"><br>
-            <label for="pass">Password</label>
-            <input type="text" id ="pass" name="pass"><br>
-            <input type ="submit" value ="Submit">
-          </p>
-        </form>
-      </div>
-    </div>
-  </div>
+
+<div class="container">
+    <h1>WiFi Manager</h1>
+    <form id="wifimanager" action="/wifimanager" method="POST">
+        <label for="name">Name:</label>
+        <input type="text" id="name" name="name" value="%NAME%" required>
+
+        <label for="ssid">SSID:</label>
+        <input type="text" id="ssid" name="ssid" value="%SSID%" required>
+
+        <label for="password">Password:</label>
+        <input type="text" id="pass" name="pass" value="%PASS%" required>
+
+        <input type="submit" value="Submit">
+    </form>
+</div>
+
 </body>
 </html>

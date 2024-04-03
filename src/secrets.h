@@ -1,2 +1,2 @@
-const char* SECRET_SSID="SARGENET";
-const char* SECRET_PASS="11223344556677889900aabbcc";
+const char* SECRET_SSID="SARGENETi";
+const char* SECRET_PASS="11223344556677889900aabbccdd";

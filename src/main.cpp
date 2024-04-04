@@ -347,7 +347,7 @@ if (!initWiFi()){
   }
 
   // Set Authentication Credentials
-  ElegantOTA.setAuth("admin", "aabbcc112233");
+  ElegantOTA.setAuth("admin", "aabbcc112233"); //page is "/update"
   // ElegantOTA callbacks
   ElegantOTA.onStart(onOTAStart);
   ElegantOTA.onProgress(onOTAProgress);

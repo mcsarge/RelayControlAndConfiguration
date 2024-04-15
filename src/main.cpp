@@ -14,6 +14,7 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <AceButton.h>
 #include <ElegantOTA.h>
 #include <ESPAsyncWebServer.h>
+#include <Meshtastic.h>
 #include "OTAStuff.h"
 #include "secrets.h"
 #include "LilygoRelays.hpp"

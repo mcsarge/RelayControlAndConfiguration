@@ -14,12 +14,10 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <AceButton.h>
 #include <ElegantOTA.h>
 #include <ESPAsyncWebServer.h>
-#include <Meshtastic.h>
 #include "OTAStuff.h"
 #include "secrets.h"
-#include "LilygoRelays.hpp"
 #include "WebStuff.h"
-
+#include <LilyGoRelays.hpp>
 
 static const char* TAG = "RelayControl";
 
@@ -47,12 +45,11 @@ void saveConfigCallback () {
   shouldSaveConfig = true;
 }
 
-
-
 //Variables to save values from HTML form
 String name;
 String ssid;
 String pass;
+String config;
 
 // File paths to save input values permanently
 const char* namePath = "/name.txt";
@@ -96,6 +93,8 @@ unsigned long timerDelay = 30000;
   // Create fileSystem with debug output
   eSPIFFS fileSystem(&Serial);  // Optional - allow the methods to print debug
 #endif
+
+
 
 #ifdef LILYGORTC
 // Callback function (get's called when time adjusts via NTP)
@@ -256,6 +255,8 @@ void relayUpdated(int relay, int value){
 }
 
 void setup() {
+  //Do this ASAP so that the relays will all be turned off before setting to their previous values.
+  relays.initialize();
 
   // Serial port for debugging purposes
   Serial.begin(115200);
@@ -263,11 +264,6 @@ void setup() {
   //delay(20000); //20 seconds for debugging/
   Serial.println("Booted");
 
-
-  relays.initialize();
-  Serial.println(relays.numberOfLEDs());
-  relays.setRelayUpdateCallback(relayUpdated);
-  
   const uint8_t boot_pin = 0;
   pinMode(boot_pin, INPUT_PULLUP);
   boot.init(boot_pin, HIGH, 0);
@@ -328,6 +324,17 @@ void setup() {
 //    fileSystem.saveToFile(passPath,pass);
   }
 
+  fileSystem.openFromFile(configPath,config);
+  if (config == ""){
+    Serial.println("Config was empty");
+  } else {
+    Serial.println("Initializing Relays");
+    relays.initialize(config);    
+  }
+
+  relays.setRelayUpdateCallback(relayUpdated);
+  
+
 
 if (!initWiFi()){
   Serial.print("Setting AP (Access Point)…");
@@ -367,10 +374,12 @@ if (!initWiFi()){
   //configTzTime("CST-8", ntpServer1, ntpServer2);
 #endif
 
+  server.rewrite("/", "/index").setFilter(ON_STA_FILTER);
+  server.rewrite("/", "/wifimanager").setFilter(ON_AP_FILTER);
   server.serveStatic("/", SPIFFS, "/");
   
   // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server.on("/index", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(SPIFFS, "/index.html", "text/html", false, processor);
   });
     
@@ -444,9 +453,6 @@ if (!initWiFi()){
     } else if (request->hasParam("saverelaystates")) {
       //Save all of the relays
       ESP_LOGD(TAG, "saveRelayState received");
-      for (int i=0; i<relays.numberOfRelays(); i++){
-        relays[i].startState = relays[i].getRelayStatus();
-      }
       lastSaveRequestTime = millis(); //request a save
               
     } else {
@@ -502,7 +508,6 @@ if (!initWiFi()){
   server.addHandler(&events);    
   ElegantOTA.begin(&server);    // Start ElegantOTA
   server.begin();
-
 }
 
 void loop() {
@@ -514,12 +519,14 @@ void loop() {
   if (lastSaveRequestTime!=-1 and (lastSaveRequestTime+SAVE_DELAY<millis())) {
     lastSaveRequestTime = -1;
     ESP_LOGD(TAG,"Save was requested");
-    Serial.println("Relays json data:" +  relays.asRawJson());
+    config = relays.asRawJson();
+    Serial.println("Relays json data:" + config);
+    fileSystem.saveToFile(configPath, config);    
   }
 
 
 #ifdef LILYGORTC
-  if (millis() - lastMillis > 3000) {
+  if (millis() - lastMillis > 600000) {
 
       lastMillis = millis();
 
@@ -533,4 +540,5 @@ void loop() {
 
   }
 #endif
+
 }

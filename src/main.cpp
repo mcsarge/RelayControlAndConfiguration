@@ -14,10 +14,11 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <AceButton.h>
 #include <ElegantOTA.h>
 #include <ESPAsyncWebServer.h>
+#include <LilyGoRelays.hpp>
 #include "OTAStuff.h"
 #include "secrets.h"
 #include "WebStuff.h"
-#include <LilyGoRelays.hpp>
+#include "AutoData.h"
 
 static const char* TAG = "RelayControl";
 
@@ -30,11 +31,6 @@ AsyncEventSource events("/events");
 const char* PARAM_DEVICE_NAME = "name";
 const char* PARAM_SSID = "ssid";
 const char* PARAM_PASS = "pass";
-
-//define your default values here, if there are different values in config.json, they are overwritten.
-char mqtt_server[40];
-char mqtt_port[6] = "8080";
-char blynk_token[34] = "YOUR_BLYNK_TOKEN";
 
 //flag for saving data
 bool shouldSaveConfig = false;
@@ -50,13 +46,15 @@ String name;
 String ssid;
 String pass;
 String config;
+String automaticControl;
 
 // File paths to save input values permanently
 const char* namePath = "/name.txt";
 const char* ssidPath = "/ssid.txt";
 const char* passPath = "/pass.txt";
-const char* relayPath = "/relays.txt";
-const char* configPath = "/config.json";
+const char* configPath = "/relayconfig.json";
+const char* automaticPath = "/automatic.txt";
+
 
 // Timer variables
 unsigned long previousMillis = 0;
@@ -72,7 +70,7 @@ const char *ntpServer2 = "time.nist.gov";
 AceButton boot;
 uint8_t state = 0;
 
-LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo6Relays,3);
+LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo6Relays,1);
 
 #ifdef LILYGORTC
 uint32_t lastMillis;
@@ -93,6 +91,90 @@ unsigned long timerDelay = 30000;
   // Create fileSystem with debug output
   eSPIFFS fileSystem(&Serial);  // Optional - allow the methods to print debug
 #endif
+
+// IotWebConf
+String ChipId = String((uint32_t)ESP.getEfuseMac(), HEX);
+// -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
+const String hostName = "Relays-" + ChipId;
+
+
+
+AutoData *automaticData;
+
+/*
+Initialize the automatic control system. This will turn on and off certain relays based on the
+values gathered from the MQTT or if that is unreachable, the Solar Controller itself.
+*/
+bool AutoControlInitialize(String autoControl){
+  if (autoControl = "") {
+    automaticData = (AutoData*)malloc(sizeof(AutoData) * relays.numberOfRelays()); 
+    for (int i=0; i<relays.numberOfRelays(); i++){
+      automaticData[i].enabled = (i % 2==0)?true:false;
+      automaticData[i].measure = BATVOLT;
+      automaticData[i].value = 24.0;
+      automaticData[i].restoreValue = 25.1;
+    }
+    return true;
+  } else {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, autoControl);
+    if (err) {
+        Serial.print("deserializeJson() failed: ");
+        Serial.println(err.c_str());
+        return false;
+    } else {
+        if (!doc.containsKey("numberofRelays")){
+            Serial.println("Error, required value numberOfRelays not present aborting.");
+            return false;
+        }
+
+        //Only read in what is in the doc or what can be configured, whichever is less.
+        int jsonCount = doc["numberofRelays"];
+        int workingCount = min(relays.numberOfRelays(), jsonCount);
+        Serial.println(workingCount);
+
+        automaticData = (AutoData*)malloc(sizeof(AutoData) * workingCount); //allocate
+
+        int index = 0;
+        for (JsonObject aData : doc["autoData"].as<JsonArray>()) {
+            if (index >= workingCount){
+                Serial.println("Break");
+                break;
+            }
+            automaticData[index].enabled = aData["enabled"].as<bool>();
+            automaticData[index].measure = aData["measure"].as<AutoMeasure>();
+            automaticData[index].value = aData["value"].as<int>();
+            automaticData[index].restoreValue = aData["restoreValue"].as<int>();
+            index++;
+        }
+    }
+    return true;
+  }
+}
+
+void AutoControlFree(){
+  free(automaticData);
+}
+
+String autoMeasureAsRawJson(){
+    JsonDocument doc;
+    doc["numberofRelays"] = relays.numberOfRelays();
+
+    JsonArray data = doc["autoData"].to<JsonArray>();
+
+    for (int autoDataIndex=0; autoDataIndex < relays.numberOfRelays(); autoDataIndex++){
+        JsonObject r = data.add<JsonObject>();
+        r["enabled"]=automaticData[autoDataIndex].enabled;
+        r["measure"]=automaticData[autoDataIndex].measure;
+        r["value"]=automaticData[autoDataIndex].value;
+        r["restoreValue"]=automaticData[autoDataIndex].restoreValue;
+    }
+
+    String returnString;
+    doc.shrinkToFit(); 
+    serializeJson(doc,returnString);
+    return returnString;
+}
 
 
 
@@ -116,14 +198,14 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
     if (eventType != AceButton::kEventPressed) {
         return;
     }
-    Serial.printf("[AceButton][%u]  N:%d E:%u S:%u state:%d\n", millis(), n->getId(), buttonState, buttonState, state);
+    ESP_LOGD(TAG, "[AceButton][%u]  N:%d E:%u S:%u state:%d\n", millis(), n->getId(), buttonState, buttonState, state);
     switch (state) {
     case 0:
         //control.setAllHigh();
         for (int i=0; i<relays.numberOfRelays();i++)
           relays[i].setRelayStatus(HIGH);
-        relays.setLEDStatus(HIGH,LilygoRelays::GreenLED,100,100);
-        relays.setLEDStatus(HIGH,LilygoRelays::RedLED,1000,1000);
+        relays.setGreenLedStatus(HIGH,100,100);
+        relays.setRedLedStatus(HIGH,1000,1000);
         if (events.count()>0){
           events.send("1", "allRelays",millis());
         }        
@@ -140,21 +222,25 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
         // setting single pins
         for (int i=0; i<relays.numberOfRelays();i++){
           relays[i].setRelayStatus(HIGH);
-          delay(250);
+          delay(50);
         }
         break;
     case 3:
         // setting single pins
         for (int i=0; i<relays.numberOfRelays();i++){
           relays[i].setRelayStatus(LOW);
-          delay(250);
+          delay(50);
         }
+     break;
+    case 4:
+        // setting single pins
+        Serial.println(autoMeasureAsRawJson());
      break;
     default:
         break;
     }
     state++;
-    state %= 4;
+    state %= 5;
 }
 
 
@@ -172,26 +258,26 @@ void findSetRelay(String rname, int  val){
 String processor(const String& replacementString){
   ESP_LOGD(TAG, "In Processor");
   if(replacementString == "NAME"){
-    ESP_LOGD(TAG, "NAME");
+    ESP_LOGD(TAG, "NAME - %", name);
     return name;
   }
   else if (replacementString == "SSID"){
-    ESP_LOGD(TAG, "SSID");
+    ESP_LOGD(TAG, "SSID - %s", ssid);
     return ssid;
   }
   else if (replacementString == "PASS"){
-    ESP_LOGD(TAG, "PASS");
+    ESP_LOGD(TAG, "PASS - %", pass);
     return pass;
   }
   else if (replacementString == "RELAYARRAYCONFIG"){
     ESP_LOGD(TAG, "RELAYARRAYCONFIG");
     String retString =
     String("<div class=\"input-container\">") +
-    String(    "<label for=\"input1\">Name:</label>") +
+    String(    "<label for=\"name\">Name:</label>") +
     String(    "<input type=\"text\" id=\"name\" name=\"name\" value=\"" + name + "\" maxlength=\"25\">") +
     String("</div><br>");
     for (int i = 0; i<relays.numberOfRelays(); i++) {
-      retString += configHTML(relays[i]);
+      retString += configHTML(relays[i], automaticData[i]);
     }
     return retString;
   }
@@ -211,12 +297,10 @@ String processor(const String& replacementString){
       retString += eventListenerJS(relays[i]);
     }
     return retString;
-  }
-    
+  }    
   ESP_LOGD(TAG, "Returning nothing");
   return "";
 }
-
 
 // Initialize WiFi
 bool initWiFi() {
@@ -225,7 +309,9 @@ bool initWiFi() {
     return false;
   }
 
+  WiFi.setHostname(hostName.c_str());
   WiFi.mode(WIFI_STA);
+  
   WiFi.begin(ssid.c_str(), pass.c_str());
   ESP_LOGD(TAG, "Connecting to WiFi...");
 
@@ -245,24 +331,24 @@ bool initWiFi() {
 }
 
 void relayUpdated(int relay, int value){
-  //Serial.print("Relay Updated ");
-  //Serial.print(relay);
-  //Serial.print(" value=");
-  //Serial.println(value);
   if (events.count()>0){
     events.send(String(value).c_str(), relays[relay].getRelayFixedShortName().c_str(),millis());
   }
 }
 
+
+
 void setup() {
   //Do this ASAP so that the relays will all be turned off before setting to their previous values.
   relays.initialize();
-
   // Serial port for debugging purposes
   Serial.begin(115200);
   delay(200);
+
+  AutoControlInitialize("");
+
   //delay(20000); //20 seconds for debugging/
-  Serial.println("Booted");
+  ESP_LOGD(TAG,"Booted");
 
   const uint8_t boot_pin = 0;
   pinMode(boot_pin, INPUT_PULLUP);
@@ -305,50 +391,47 @@ void setup() {
   // Load values saved in SPIFFS
   fileSystem.openFromFile(namePath, name);
   if (name == "") {
-    Serial.println("Names was empty");
-//    name = "Relay Control";
-//    fileSystem.saveToFile(namePath,name);
+    ESP_LOGD(TAG,"Names was empty");
   }
 
   fileSystem.openFromFile(ssidPath, ssid);
   if (ssid == "") {
-    Serial.println("SSID was empty");
-//    ssid = SECRET_SSID;
-//    fileSystem.saveToFile(ssidPath,ssid);
+    ESP_LOGD(TAG,"SSID was empty");
   }
 
   fileSystem.openFromFile(passPath,pass);
   if (pass == ""){
-    Serial.println("PASS was empty");
-//   pass=SECRET_PASS;
-//    fileSystem.saveToFile(passPath,pass);
+    ESP_LOGD(TAG, "PASS was empty");
   }
 
   fileSystem.openFromFile(configPath,config);
   if (config == ""){
     Serial.println("Config was empty");
   } else {
-    Serial.println("Initializing Relays");
+    ESP_LOGD(TAG,"Initializing Relays");
     relays.initialize(config);    
+  }
+
+  fileSystem.openFromFile(automaticPath,automaticControl);
+  if (automaticControl == ""){
+    Serial.println("automaticControl was empty");
+  } else {
+    ESP_LOGD(TAG,"Initializing Automatic Control");
+    AutoControlInitialize(automaticControl);    
   }
 
   relays.setRelayUpdateCallback(relayUpdated);
   
-
-
 if (!initWiFi()){
   Serial.print("Setting AP (Access Point)…");
   // Remove the password parameter, if you want the AP (Access Point) to be open
   WiFi.softAP("RELAYCONTROL", "aabbcc112233");
 
   IPAddress IP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
-  Serial.println(IP);
+  ESP_LOGD(TAG,"AP IP address: %s", IP.toString());
 
 }
-
-  ESP_LOGD(TAG, "%s", ssid);
-  //ESP_LOGD(TAG, "%s", pass);
+  ESP_LOGD(TAG, "SSID = %s", ssid);
 
   for (int i=0; i<relays.numberOfRelays();i++){
     ESP_LOGD(TAG, "%s", relays[i].relayName);
@@ -474,32 +557,28 @@ if (!initWiFi()){
         // HTTP POST name value
         if (p->name() == PARAM_DEVICE_NAME) {
           name = p->value().c_str();
-          //ESP_LOGD(TAG, "Name set to: %s", name);
-          Serial.println("Name = " + name);
+          ESP_LOGD(TAG, "Name set to: %s", name);
           // Write file to save value
           fileSystem.saveToFile(namePath, name);
         }
         // HTTP POST ssid value
         if (p->name() == PARAM_SSID) {
           ssid = p->value().c_str();
-          Serial.println("SSID = " + ssid);
-          //ESP_LOGD(TAG, "SSID set to: %s", ssid);
+          ESP_LOGD(TAG, "SSID set to: %s", ssid);
           // Write file to save value
           fileSystem.saveToFile(ssidPath, ssid);
         }
         // HTTP POST pass value
         if (p->name() == PARAM_PASS) {
           pass = p->value().c_str();
-          Serial.println("Pass = " + pass);
-          //ESP_LOGD(TAG, "Password set to: %s", pass);
+          ESP_LOGD(TAG, "Password set to: %s", pass);
           // Write file to save value
           fileSystem.saveToFile(passPath, pass);            
         }
-        //ESP_LOGD(TAG, "POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+        ESP_LOGD(TAG, "POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
       }
     }
-    request->send(200, "text/plain", "Done. ESP will restart, connect to your router on your network");
-    delay(6000);
+    delay(3000);
     request->redirect("/");
     delay(1000);
     ESP.restart();
@@ -508,6 +587,8 @@ if (!initWiFi()){
   server.addHandler(&events);    
   ElegantOTA.begin(&server);    // Start ElegantOTA
   server.begin();
+  Serial.print("Hostname = "); Serial.println(hostName);
+
 }
 
 void loop() {

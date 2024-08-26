@@ -234,6 +234,7 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
      break;
     case 4:
         // setting single pins
+        ESP_LOGD(TAG, "IP address is: %s", WiFi.localIP().toString());
         Serial.println(autoMeasureAsRawJson());
      break;
     default:

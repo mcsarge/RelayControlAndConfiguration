@@ -15,12 +15,18 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <ElegantOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <LilyGoRelays.hpp>
+#include <esp32ModbusTCP.h>
+#include "Log.h"
+#include "AsyncMqttClient.h"
+#include "ChargeControllerInfo.h"
 #include "OTAStuff.h"
+#include "ModbusStuff.h"
 #include "secrets.h"
 #include "WebStuff.h"
 #include "AutoData.h"
 
-static const char* TAG = "RelayControl";
+
+
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -31,6 +37,14 @@ AsyncEventSource events("/events");
 const char* PARAM_DEVICE_NAME = "name";
 const char* PARAM_SSID = "ssid";
 const char* PARAM_PASS = "pass";
+
+const char* PARAM_CLASSIC_NAME = "classicname";
+const char* PARAM_CLASSIC_IP = "classicip";
+const char* PARAM_CLASSIC_PORT = "classicport";
+
+const char* DEFAULT_CLASSIC_IP = "192.168.0.225";
+const char* DEFAULT_CLASSIC_PORT = "502";
+const char* DEFAULT_CLASSIC_NAME = "Classic";
 
 //flag for saving data
 bool shouldSaveConfig = false;
@@ -45,6 +59,9 @@ void saveConfigCallback () {
 String name;
 String ssid;
 String pass;
+String classicname;
+String classicip;
+String classicport;
 String config;
 String automaticControl;
 
@@ -52,6 +69,9 @@ String automaticControl;
 const char* namePath = "/name.txt";
 const char* ssidPath = "/ssid.txt";
 const char* passPath = "/pass.txt";
+const char* classicnamePath = "/classicname.txt";
+const char* classicipPath = "/classicip.txt";
+const char* classicportPath = "/classicport.txt";
 const char* configPath = "/relayconfig.json";
 const char* automaticPath = "/automatic.txt";
 
@@ -79,9 +99,16 @@ SensorPCF8563 rtc;
 
 // Timer variables
 uint32_t lastSaveRequestTime=-1;
+uint32_t wifiNeedsSave=-1;
 
 unsigned long lastTime = 0;  
 unsigned long timerDelay = 30000;
+unsigned long wifiReconnectPreviousMillis = millis();
+
+
+bool modbusGood = false;
+chargerData cd;
+
 
 // Create a eSPIFFS class
 #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
@@ -97,85 +124,21 @@ String ChipId = String((uint32_t)ESP.getEfuseMac(), HEX);
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const String hostName = "Relays-" + ChipId;
 
-
-
 AutoData *automaticData;
 
+
 /*
-Initialize the automatic control system. This will turn on and off certain relays based on the
-values gathered from the MQTT or if that is unreachable, the Solar Controller itself.
+Initialize the array that stores the information for the automatic control system. 
+This will turn on and off certain relays based on the values gathered from the Solar Controller
 */
-bool AutoControlInitialize(String autoControl){
-  if (autoControl = "") {
-    automaticData = (AutoData*)malloc(sizeof(AutoData) * relays.numberOfRelays()); 
-    for (int i=0; i<relays.numberOfRelays(); i++){
-      automaticData[i].enabled = (i % 2==0)?true:false;
-      automaticData[i].measure = BATVOLT;
-      automaticData[i].value = 24.0;
-      automaticData[i].restoreValue = 25.1;
-    }
-    return true;
-  } else {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, autoControl);
-    if (err) {
-        Serial.print("deserializeJson() failed: ");
-        Serial.println(err.c_str());
-        return false;
-    } else {
-        if (!doc.containsKey("numberofRelays")){
-            Serial.println("Error, required value numberOfRelays not present aborting.");
-            return false;
-        }
-
-        //Only read in what is in the doc or what can be configured, whichever is less.
-        int jsonCount = doc["numberofRelays"];
-        int workingCount = min(relays.numberOfRelays(), jsonCount);
-        Serial.println(workingCount);
-
-        automaticData = (AutoData*)malloc(sizeof(AutoData) * workingCount); //allocate
-
-        int index = 0;
-        for (JsonObject aData : doc["autoData"].as<JsonArray>()) {
-            if (index >= workingCount){
-                Serial.println("Break");
-                break;
-            }
-            automaticData[index].enabled = aData["enabled"].as<bool>();
-            automaticData[index].measure = aData["measure"].as<AutoMeasure>();
-            automaticData[index].value = aData["value"].as<int>();
-            automaticData[index].restoreValue = aData["restoreValue"].as<int>();
-            index++;
-        }
-    }
-    return true;
-  }
+bool AutoControlAllocate(int numberOfRelays){
+  automaticData = (AutoData*)malloc(sizeof(AutoData) * numberOfRelays); 
+  return true;
 }
 
 void AutoControlFree(){
   free(automaticData);
 }
-
-String autoMeasureAsRawJson(){
-    JsonDocument doc;
-    doc["numberofRelays"] = relays.numberOfRelays();
-
-    JsonArray data = doc["autoData"].to<JsonArray>();
-
-    for (int autoDataIndex=0; autoDataIndex < relays.numberOfRelays(); autoDataIndex++){
-        JsonObject r = data.add<JsonObject>();
-        r["enabled"]=automaticData[autoDataIndex].enabled;
-        r["measure"]=automaticData[autoDataIndex].measure;
-        r["value"]=automaticData[autoDataIndex].value;
-        r["restoreValue"]=automaticData[autoDataIndex].restoreValue;
-    }
-
-    String returnString;
-    doc.shrinkToFit(); 
-    serializeJson(doc,returnString);
-    return returnString;
-}
-
 
 
 #ifdef LILYGORTC
@@ -233,9 +196,29 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
         }
      break;
     case 4:
-        // setting single pins
         ESP_LOGD(TAG, "IP address is: %s", WiFi.localIP().toString());
-        Serial.println(autoMeasureAsRawJson());
+        Serial.println(relays[0].getUserData());
+        Serial.println(relays[1].getUserData());
+
+        fileSystem.openFromFile(configPath,config);
+        if (config == ""){
+          Serial.println("Config was empty");
+        } else {
+          ESP_LOGD(TAG,"Initializing Relays");
+          relays.initialize(config);
+
+          //now initialize each AutoData from the UserData field
+          for (int i=0; i<relays.numberOfRelays();i++){
+            Serial.println(relays[i].getUserData());
+            automaticData[i] = fromJson(relays[i].getUserData());
+          }
+        }
+        Serial.println(relays[0].getUserData());
+        Serial.println(relays[1].getUserData());
+
+
+
+
      break;
     default:
         break;
@@ -255,6 +238,32 @@ void findSetRelay(String rname, int  val){
   }
 }
 
+String measureText(){
+  String retString = "Charger and Battery status will be displayed here.";
+  if (cd.BatVoltage != -1 & millis()-cd.gatherTime < DEFAULT_GATHER_RATE*2) {
+    retString = "SOC: " + String((int)cd.SOC);
+    retString += "%; Bat. Volts: " + String(cd.BatVoltage,2);
+    retString += "V; Bat. Curr: " + String(cd.BatCurrent,2);
+    retString += "A;\nPV Volts: " + String(cd.PVVoltage,2);
+    retString += "V; PV Curr: " + String(cd.PVCurrent,2);
+    retString += "A";
+
+    
+    // struct tm timeinfo;
+    // if (!getLocalTime(&timeinfo)) {
+    //     Serial.println("No time available (yet)");
+    // } else {
+    //   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+
+    //   char str[20];
+    //   strftime(str, sizeof str, "%H:%M:%S", &timeinfo); 
+    //   Serial.println(str);
+    //   retString += "; at " + String(str);
+    // }
+  }
+  return retString;
+}
+
 
 String processor(const String& replacementString){
   ESP_LOGD(TAG, "In Processor");
@@ -269,6 +278,23 @@ String processor(const String& replacementString){
   else if (replacementString == "PASS"){
     ESP_LOGD(TAG, "PASS - %", pass);
     return pass;
+  }
+  else if (replacementString == "CLASSICNAME"){
+    ESP_LOGD(TAG, "CLASSICNAME - %", classicname);
+    return classicname;
+  }
+  else if (replacementString == "CLASSICIP"){
+    ESP_LOGD(TAG, "CLASSICIP - %", classicip);
+    return classicip;
+  }
+  else if (replacementString == "CLASSICPORT"){
+    ESP_LOGD(TAG, "CLASSICPORT - %", classicport);
+    return classicport;
+  }
+  else if (replacementString == "CHARGERINFORMATION"){
+    String mt = measureText();
+    ESP_LOGD(TAG, "CHARGERINFORMATION - %", mt);
+    return mt;
   }
   else if (replacementString == "RELAYARRAYCONFIG"){
     ESP_LOGD(TAG, "RELAYARRAYCONFIG");
@@ -338,6 +364,89 @@ void relayUpdated(int relay, int value){
 }
 
 
+void measuresUpdated(){
+  if (events.count()>0 & (millis() - cd.gatherTime < DEFAULT_GATHER_RATE*2)){
+    events.send(measureText().c_str(), "chargedata",millis());
+  }
+}
+
+
+bool autoAdjustSingleRelay(double currentVal, bool currentState, double val, double resVal){
+
+  bool retVal = false;  
+  bool opposite = false;  //is this a 'normal' where resVal is greater than val or opposite?
+
+  if (resVal < val) {
+    opposite = true;
+  }
+
+  String info = "autoAdjustSingleRelay: currentVal="; 
+  info += String(currentVal);
+  info += " currentState="; 
+  info += currentState?"on val=":"off val="; 
+  info += String(currentVal); 
+  info += " resVal="; 
+  info += String(resVal); 
+  info += opposite?" opposite=true":" opposite=false";
+
+  Serial.println(info);
+
+  if (currentState){ //If the relay is ON
+    retVal = (opposite?!(currentVal >= val):(currentVal >= val));
+  } else { //the relay is currently off
+    retVal = (opposite?!(currentVal >= resVal):(currentVal >= resVal));
+  }
+  Serial.print("Returning ");
+  Serial.println(retVal?"true":"false");
+  return retVal;
+}
+
+/*
+Process the settings found in autoData against the data collected from the solar charger and 
+change the state of any relays that need to be switched based on the charger data.
+Note calling setRelayStatus will only chage the relay if the value is different and it will handle
+sending out the event to update the screen etc.
+*/
+void doAutoControl(){
+  double theCurrentValue;
+  //Make sure that the data that was received is recent
+  if (millis() - cd.gatherTime <= DEFAULT_GATHER_RATE){
+    for (int i=0; i< relays.numberOfRelays(); i++){
+      //Only run the check if the measure is not "IGNORE"
+      if (automaticData[i].measure != IGNORE){
+        switch (automaticData[i].measure) {
+        case SOC:
+          theCurrentValue = cd.SOC;
+          break;
+        case BATVOLT:
+          theCurrentValue = cd.BatVoltage;
+          break;
+        case BATCURRENT:
+          theCurrentValue = cd.BatCurrent;
+          break;
+        case PVVOLT:
+          theCurrentValue = cd.PVVoltage;
+          break;
+        case PVCURRENT:
+          theCurrentValue = cd.PVCurrent;
+          break;
+        default:
+          theCurrentValue = cd.SOC;
+          break;
+        }
+
+        Serial.println("Checking relay = " + String(i));
+        relays[i].setRelayStatus(
+          autoAdjustSingleRelay(theCurrentValue, 
+          relays[i].getRelayStatus(),automaticData[i].value,automaticData[i].restoreValue));
+      }
+    }
+  }
+}
+
+
+
+
 
 void setup() {
   //Do this ASAP so that the relays will all be turned off before setting to their previous values.
@@ -346,7 +455,7 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  AutoControlInitialize("");
+  AutoControlAllocate(relays.numberOfRelays());
 
   //delay(20000); //20 seconds for debugging/
   ESP_LOGD(TAG,"Booted");
@@ -405,20 +514,36 @@ void setup() {
     ESP_LOGD(TAG, "PASS was empty");
   }
 
+  fileSystem.openFromFile(classicnamePath, classicname);
+  if (classicname == ""){
+    ESP_LOGD(TAG, "Classic Name was empty, setting default");
+    classicname = DEFAULT_CLASSIC_NAME;
+  }
+
+  fileSystem.openFromFile(classicipPath,classicip);
+  if (classicip == ""){
+    ESP_LOGD(TAG, "ClassicIP was empty, setting default");
+    classicip = DEFAULT_CLASSIC_IP;
+  }
+
+  fileSystem.openFromFile(classicportPath,classicport);
+  if (classicport == ""){
+    ESP_LOGD(TAG, "ClassicPort was empty, setting default");
+    classicport = DEFAULT_CLASSIC_PORT;
+  }
+
   fileSystem.openFromFile(configPath,config);
   if (config == ""){
     Serial.println("Config was empty");
   } else {
     ESP_LOGD(TAG,"Initializing Relays");
-    relays.initialize(config);    
-  }
+    relays.initialize(config);
 
-  fileSystem.openFromFile(automaticPath,automaticControl);
-  if (automaticControl == ""){
-    Serial.println("automaticControl was empty");
-  } else {
-    ESP_LOGD(TAG,"Initializing Automatic Control");
-    AutoControlInitialize(automaticControl);    
+    //now initialize each AutoData from the UserData field
+    for (int i=0; i<relays.numberOfRelays();i++){
+      Serial.println(relays[i].getUserData());
+      automaticData[i] = fromJson(relays[i].getUserData());
+    }
   }
 
   relays.setRelayUpdateCallback(relayUpdated);
@@ -486,35 +611,56 @@ if (!initWiFi()){
     ESP_LOGD(TAG, "caught post");
     int params = request->params();
     bool saveIt = false; //did anything change?
+    ESP_LOGD(TAG, "caught post 2");
+    
     for(int i=0;i<params;i++){
       AsyncWebParameter* p = request->getParam(i);
       if(p->isPost()){
         // HTTP POST name value
         ESP_LOGD(TAG, "%s", p->name());
         if (p->name() == PARAM_DEVICE_NAME) {
-          name = p->value().c_str();
-          ESP_LOGD(TAG, "Name set to: %s", name);
-          // Write file to save value
-          //writeFile(SPIFFS, namePath, name.c_str());
-          fileSystem.saveToFile(namePath, name);            
+          name = p->value();
+          saveIt = true;
         }
         // HTTP POST relay value
         for (int i=0; i<relays.numberOfRelays();i ++){
           if (p->name() == relays[i].getRelayFixedShortName()) {
-            if (relays[i].relayName != p->value().c_str()){
+            if (relays[i].relayName != p->value()){
               saveIt = true;
               relays[i].relayName = p->value();
             }
           }
-          if (p->name() == String(relays[i].getRelayFixedShortName()+"-duration")){
+          if (p->name() == relays[i].getRelayFixedShortName()+"-duration"){
             if (relays[i].momentaryDuration != p->value().toInt()){
               saveIt = true;
               relays[i].momentaryDuration = p->value().toInt();
             }
           }
+
+          if (p->name() == relays[i].getRelayFixedShortName()+"-measure"){
+            if(autoMeasureInfo[automaticData[i].measure].shortName != p->value()){
+              saveIt = true;
+              automaticData[i].measure = fromString(p->value());
+            }
+          }
+
+          if (p->name() == relays[i].getRelayFixedShortName()+"-value"){
+            if (abs(automaticData[i].value-p->value().toFloat())>0.01){
+              saveIt = true;
+              automaticData[i].value = p->value().toFloat();
+            }
+          }
+
+          if (p->name() == relays[i].getRelayFixedShortName()+"-restorevalue"){
+            if (abs(automaticData[i].restoreValue-p->value().toFloat())>0.01){
+              saveIt = true;
+              automaticData[i].restoreValue = p->value().toFloat();
+            }
+          }
         }
       }
     }
+
     if (saveIt) {
       ESP_LOGD(TAG, "Requesting Save");
       lastSaveRequestTime = millis();
@@ -558,60 +704,125 @@ if (!initWiFi()){
         // HTTP POST name value
         if (p->name() == PARAM_DEVICE_NAME) {
           name = p->value().c_str();
-          ESP_LOGD(TAG, "Name set to: %s", name);
-          // Write file to save value
-          fileSystem.saveToFile(namePath, name);
+          wifiNeedsSave = millis();
         }
         // HTTP POST ssid value
         if (p->name() == PARAM_SSID) {
           ssid = p->value().c_str();
-          ESP_LOGD(TAG, "SSID set to: %s", ssid);
-          // Write file to save value
-          fileSystem.saveToFile(ssidPath, ssid);
+          wifiNeedsSave = millis();
         }
         // HTTP POST pass value
         if (p->name() == PARAM_PASS) {
           pass = p->value().c_str();
-          ESP_LOGD(TAG, "Password set to: %s", pass);
-          // Write file to save value
-          fileSystem.saveToFile(passPath, pass);            
+          wifiNeedsSave = millis();
         }
-        ESP_LOGD(TAG, "POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+        // HTTP POST classicname value
+        if (p->name() == PARAM_CLASSIC_NAME) {
+          classicname = p->value().c_str();
+          wifiNeedsSave = millis();
+        }
+        // HTTP POST classicname value
+        if (p->name() == PARAM_CLASSIC_IP) {
+          classicip = p->value().c_str();
+          wifiNeedsSave = millis();
+        }
+        // HTTP POST classicname value
+        if (p->name() == PARAM_CLASSIC_PORT) {
+          classicport = p->value().c_str();
+          wifiNeedsSave = millis();
+        }
       }
     }
-    delay(3000);
     request->redirect("/");
-    delay(1000);
-    ESP.restart();
   });
 
   server.addHandler(&events);    
   ElegantOTA.begin(&server);    // Start ElegantOTA
   server.begin();
   Serial.print("Hostname = "); Serial.println(hostName);
+  
+  modbusGood = false;
+  int i = 0;
+  while (!modbusGood and i++<100) {
+    modbusGood = setupModbus(classicip,classicport);
+    if (!modbusGood)
+    {
+      Serial.println("Modbus setup failed");
+      delay(1000);
+    } else {
+      Serial.println("Modbus setup success");
+    }
+  }
 
+  //Initialize the watchdog that can reset the module if thing go wrong.
+	init_watchdog();
 }
 
+
+
 void loop() {
+
+  feed_watchdog();
 
   ElegantOTA.loop();
   boot.check();
   relays.loop();
 
+  // if WiFi is down, try reconnecting
+  if ((WiFi.status() != WL_CONNECTED) && (millis() - wifiReconnectPreviousMillis >= (1000*60))) { //check every minute
+    Serial.println("Reconnecting to WiFi...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    wifiReconnectPreviousMillis = millis();
+  }
+
+  if (WiFi.status() == WL_CONNECTED){
+    if (modbusGood){
+      if (gatherModbusData()){
+        //got modbus data, process it.
+        printModbusData();
+        cd = getChargerData();
+        measuresUpdated();
+        doAutoControl();
+      }
+    }
+  }
+
   if (lastSaveRequestTime!=-1 and (lastSaveRequestTime+SAVE_DELAY<millis())) {
     lastSaveRequestTime = -1;
     ESP_LOGD(TAG,"Save was requested");
+
+    //store all the autoData with each relay in the UserData section
+    for (int i=0; i<relays.numberOfRelays(); i++){
+      relays[i].setUserData(asRawJson(automaticData[i]));
+    }
+    //Save the name of the device.
+    fileSystem.saveToFile(namePath, name);            
+
     config = relays.asRawJson();
     Serial.println("Relays json data:" + config);
-    fileSystem.saveToFile(configPath, config);    
+    fileSystem.saveToFile(configPath, config);
+  }
+
+  if (wifiNeedsSave!=-1 and (wifiNeedsSave+SAVE_DELAY<millis())) {
+    wifiNeedsSave = -1;
+    ESP_LOGD(TAG,"WiFi configuration Save was requested");
+    fileSystem.saveToFile(namePath, name);
+    fileSystem.saveToFile(ssidPath, ssid);
+    fileSystem.saveToFile(passPath, pass);            
+    fileSystem.saveToFile(classicnamePath, classicname);            
+    fileSystem.saveToFile(classicipPath, classicip);            
+    fileSystem.saveToFile(classicportPath, classicport);   
+    delay(3000); //wait 3 seconds, then restart.
+    ESP.restart();
+         
   }
 
 
+
 #ifdef LILYGORTC
-  if (millis() - lastMillis > 600000) {
-
+  if (millis() - lastMillis > (1000*60*10)) { //10 minutes
       lastMillis = millis();
-
       RTC_DateTime datetime = rtc.getDateTime();
       // Serial.printf(" Year :"); Serial.print(datetime.year);
       // Serial.printf(" Month:"); Serial.print(datetime.month);

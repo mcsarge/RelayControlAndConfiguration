@@ -7,15 +7,13 @@
 
 String measureString(AutoMeasure measure, AutoMeasure select){
   String retString;
-  retString = "<option value=\"" + autoMeasureInfo[measure][0] + "\" ";
+  retString = "<option value=\"" + autoMeasureInfo[measure].shortName + "\" ";
   retString += (select==measure?"selected":"");
-  retString += ">" + autoMeasureInfo[measure][1] + "</option>";
+  retString += ">" + autoMeasureInfo[measure].longName + "</option>";
   return retString;
 }
 
 String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
-  
-  String autoEnabled = relayAutoData.enabled?"checked":""; 
   
   return 
       String("<div class=\"relay-section\">")
@@ -29,10 +27,6 @@ String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
     + String(     "<input type=\"number\" id=\"" + relay.getRelayFixedShortName() + "-duration\" name=\"" + relay.getRelayFixedShortName() + "-duration\" value=\"" + relay.momentaryDuration + "\" maxlength=\"4\">")
     + String(   "</div>")
     + String(   "<div class=\"relay-item\">")
-    + String(     "<label for=\"" + relay.getRelayFixedShortName() + "-auto\">Automatic:</label>")
-    + String(     "<input type=\"checkbox\" id=\"" + relay.getRelayFixedShortName() + "-auto\" name=\"" + relay.getRelayFixedShortName() + "-auto\" " + autoEnabled + ">")
-    + String(   "</div>")
-    + String(   "<div class=\"relay-item\">")
     + String(     "<label for=\"" + relay.getRelayFixedShortName() + "-measure\">Measure:</label>")
     + String(     "<select id=\"" + relay.getRelayFixedShortName() + "-measure\" name=\"" + relay.getRelayFixedShortName() + "-measure\">")
     +             measureString(SOC, relayAutoData.measure)
@@ -40,6 +34,7 @@ String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
     +             measureString(BATCURRENT, relayAutoData.measure)
     +             measureString(PVVOLT, relayAutoData.measure)
     +             measureString(PVCURRENT, relayAutoData.measure)
+    +             measureString(IGNORE, relayAutoData.measure)
     + String(     "</select>")
     + String(   "</div>")
     + String(   "<div class=\"relay-item\">")
@@ -49,9 +44,6 @@ String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
     + String(     "<input type=\"number\" id=\"" + relay.getRelayFixedShortName() + "-restorevalue\" name=\"" + relay.getRelayFixedShortName() + "-restorevalue\" step=\"any\" value=\"" + relayAutoData.restoreValue + "\">")
     + String(   "</div>")
     + String("</div>");
-
-
-
 }
 
 String actionHTML(LilygoRelays::lilygoRelay relay){

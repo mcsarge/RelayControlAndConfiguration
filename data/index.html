@@ -9,10 +9,19 @@
     </head>
     <body>
     <h1>%NAME%</h1>
+
     <div class="relay-container">
+
+      <div class="measure-section">
+        <h3>Charger and Battery Information</h3>
+        <div class="measure-item">
+          <label class="measure-label" id="chargedata">%CHARGERINFORMATION%</label>
+        </div>    
+      </div>    
       %RELAYSWITCHES%
       <br>
       <a href="/relayconfig">Configure Relays</a>
+      <a href="/wifimanager">Configure WiFi, etc.</a>
     </div>
     <script>
       if (!!window.EventSource) {
@@ -40,8 +49,14 @@
           checkbox.checked = checked;});
        }, false);
        
+       source.addEventListener('chargedata', function(e) {
+        console.log("chargedata", e.data);
+        document.getElementById('chargedata').innerText = (e.data?.trim());
+        }, false);
+
        %RELAYEVENTLISTENERS%
        
+
 
       }
        function toggleCheckbox(element) {

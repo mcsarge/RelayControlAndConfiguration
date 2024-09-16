@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WiFi Manager</title>
+<link rel="icon" type="image/png" href="favicon.png">
 <style>
     body {
         font-family: Arial, sans-serif;
@@ -27,6 +28,7 @@
 
     label {
         display: block;
+        margin-top: 15px;
         margin-bottom: 5px;
     }
 
@@ -47,6 +49,7 @@
         border-radius: 4px;
         cursor: pointer;
         width: 100%;
+        margin-top: 15px;
     }
 
     input[type="submit"]:hover {
@@ -57,7 +60,7 @@
 <body>
 
 <div class="container">
-    <h1>WiFi Manager</h1>
+    <h1>WiFi Manager </h1><br>(Submit will Restart the Device)</h1>
     <form id="wifimanager" action="/wifimanager" method="POST">
         <label for="name">Name:</label>
         <input type="text" id="name" name="name" value="%NAME%" required>
@@ -68,6 +71,15 @@
         <label for="password">Password:</label>
         <input type="text" id="pass" name="pass" value="%PASS%" required>
 
+        <label for="classicname">Midnite Classic Name:</label>
+        <input type="text" id="classicname" name="classicname" value="%CLASSICNAME%" required>
+
+        <label for="classicip">Midnite Classic IP:</label>
+        <input type="text" id="classicip" name="classicip" value="%CLASSICIP%" required>
+
+        <label for="classicport">Midnite Classic Port:</label>
+        <input type="text" id="classicport" name="classicport" value="%CLASSICPORT%" required>
+        <br><br>
         <input type="submit" value="Submit">
     </form>
 </div>

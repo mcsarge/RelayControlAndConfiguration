@@ -17,7 +17,7 @@ h1 {
 }
 
 .relay-section {
-  border: 2px solid #ccc;
+  border: none;
   padding: 5px;
   margin-bottom: 5px;
 }
@@ -32,6 +32,31 @@ h1 {
   display: flex;
   align-items: center;
   margin-bottom: 3px;
+}
+
+.measure-section {
+  border: 2px solid #ccc;
+  padding: 5px;
+  margin-bottom: 5px;
+}
+
+.measure-section h3 {
+  margin-top: 0;
+  margin-bottom: 0;
+  text-align: center;
+  padding: 1px;
+}
+
+.measure-item {
+  display: flex;
+  text-align: center;
+  margin-bottom: 3px;
+}
+
+.measure-label {
+  margin-right: 10px;
+  text-align: center;
+  width: 600px;
 }
 
 label {

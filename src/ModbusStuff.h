@@ -2,6 +2,7 @@
 #define MODBUSSTUFF_H
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include "ChargeControllerInfo.h"
 #include <esp32ModbusTCP.h>
 
@@ -13,7 +14,9 @@
 
 struct chargerData
 {
-   unsigned long gatherTime = 0;
+   unsigned long gatherMillis = 0;
+   time_t gatherTime = 0;
+
    int SOC = 0;
    double BatVoltage = -1;
    double BatCurrent = -1;
@@ -24,7 +27,7 @@ struct chargerData
 void init_watchdog();
 void feed_watchdog();
 
-bool setupModbus(String ip_addr, String port_number);
+bool setupModbus(String ip_addr, String port_number, WiFiClass _wifi);
 bool gatherModbusData();
 void printModbusData();
 

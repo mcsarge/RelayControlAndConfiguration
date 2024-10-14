@@ -354,33 +354,43 @@ void modbusCallback(uint16_t packetId, uint8_t slaveAddress, MBFunctionCode func
 }
 
 
-bool setupModbus(String ip_addr, String port_number){
+bool setupModbus(String ip_addr, String port_number, WiFiClass _wifi){
     IPAddress ip;
 
-    if (ip.fromString(ip_addr))
-    {
-        int port = atoi(port_number.c_str());
-        Serial.print("IP=");
-        Serial.print(ip.toString());
-        Serial.print(" Port=");
-        Serial.println(port);
+    //test to see if this is an IP stored
+    if (!ip.fromString(ip_addr)){
+		//Try to get the Ip address using the name
+		int err = WiFi.hostByName(ip_addr.c_str(), ip) ;
+		if(err != 1){
+			Serial.print("Not able to convert ip_addr to ip address, Error code: ");
+			Serial.println(err);
+			return false;
+		}		
+	}
 
-        _pClassic = new esp32ModbusTCP(10, ip, port);
-        _pClassic->onData(modbusCallback);
-        _pClassic->onError(modbusErrorCallback);
-        
-        _chargerData.gatherTime = 0;
-        _chargerData.SOC = 0;
-        _chargerData.BatVoltage = 0.0;
-        _chargerData.BatCurrent = 0.0;
-        _chargerData.PVVoltage = 0.0;
-        _chargerData.PVCurrent = 0.0;
-        
-		_nextGatherTime = millis() + INITIAL_MODBUS_COLLECTION_DELAY;
+	Serial.println("\nStarting connection to server...");
+	int port = atoi(port_number.c_str());
+	Serial.print("ip_addr=");
+	Serial.print(ip_addr);
+	Serial.print(" IP=");
+	Serial.print(ip.toString());
+	Serial.print(" Port=");
+	Serial.println(port);
 
-        return true;
-    }
-    return false;
+	_pClassic = new esp32ModbusTCP(10, ip, port);
+	_pClassic->onData(modbusCallback);
+	_pClassic->onError(modbusErrorCallback);
+	
+	_chargerData.gatherMillis = 0;
+	_chargerData.SOC = 0;
+	_chargerData.BatVoltage = 0.0;
+	_chargerData.BatCurrent = 0.0;
+	_chargerData.PVVoltage = 0.0;
+	_chargerData.PVCurrent = 0.0;
+	
+	_nextGatherTime = millis() + INITIAL_MODBUS_COLLECTION_DELAY;
+
+	return true;
 }
 
 bool gatherModbusData() {
@@ -414,7 +424,8 @@ bool gatherModbusData() {
 		if (modbusRequestFailureCount >= MAX_MODBUS_READ_ATTEMPTS){
 			//skip this whole request
 			doGather = false;
-			_nextGatherTime = millis() + (2 * _currentGatherRate); //halve the rate when getting errors.
+			_currentGatherRate = 2*_currentGatherRate; //halve the rate when getting errors.
+			_nextGatherTime = millis() + _currentGatherRate; 
 			_registers[0].received = false;
 			_registers[1].received = false;
 			_registers[3].received = false;
@@ -429,9 +440,11 @@ bool gatherModbusData() {
 				_chargerData.BatCurrent = _chargeControllerInfo.WhizbangBatCurrent;
 				_chargerData.PVVoltage = _chargeControllerInfo.PVVoltage;
 				_chargerData.PVCurrent = _chargeControllerInfo.PVCurrent;
-				_chargerData.gatherTime = millis();
+				_chargerData.gatherMillis = millis();
+			    time(&_chargerData.gatherTime); //store the gather time.
 
 				doGather = false;
+				_currentGatherRate = DEFAULT_GATHER_RATE;
 				return true;
 			}
 		}
@@ -440,7 +453,7 @@ bool gatherModbusData() {
 }
 
 void printModbusData(){
-    if ((millis() - _chargerData.gatherTime) < _currentGatherRate) {
+    if ((millis() - _chargerData.gatherMillis) < _currentGatherRate*2) {
         Serial.print("SOC = ");
         Serial.println(_chargerData.SOC);
         Serial.print("Battery Voltage = ");
@@ -451,6 +464,8 @@ void printModbusData(){
         Serial.println(_chargerData.PVVoltage);
         Serial.print("PV Current = ");
         Serial.println(_chargerData.PVCurrent);
+        Serial.print("GatherMillis = ");
+        Serial.println(_chargerData.gatherMillis);
     } else {
         Serial.println("The data is too OLD");
     }

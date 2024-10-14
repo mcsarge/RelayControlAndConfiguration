@@ -240,26 +240,27 @@ void findSetRelay(String rname, int  val){
 
 String measureText(){
   String retString = "Charger and Battery status will be displayed here.";
-  if (cd.BatVoltage != -1 & millis()-cd.gatherTime < DEFAULT_GATHER_RATE*2) {
+  time_t now;
+  time(&now);
+  if (cd.BatVoltage != -1 
+      & millis()-cd.gatherMillis < (DEFAULT_GATHER_RATE*2)) { 
     retString = "SOC: " + String((int)cd.SOC);
-    retString += "%; Bat. Volts: " + String(cd.BatVoltage,2);
+    retString += "; Bat. Volts: " + String(cd.BatVoltage,2);
     retString += "V; Bat. Curr: " + String(cd.BatCurrent,2);
-    retString += "A;\nPV Volts: " + String(cd.PVVoltage,2);
+    retString += "A; PV Volts: " + String(cd.PVVoltage,2);
     retString += "V; PV Curr: " + String(cd.PVCurrent,2);
     retString += "A";
-
     
-    // struct tm timeinfo;
-    // if (!getLocalTime(&timeinfo)) {
-    //     Serial.println("No time available (yet)");
-    // } else {
-    //   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-
-    //   char str[20];
-    //   strftime(str, sizeof str, "%H:%M:%S", &timeinfo); 
-    //   Serial.println(str);
-    //   retString += "; at " + String(str);
-    // }
+    struct tm *timeinfo;
+    timeinfo = localtime(&cd.gatherTime);
+    if(timeinfo->tm_year > (2016 - 1900)){ //is the time good?
+      Serial.println(timeinfo, "%A, %B %d %Y %H:%M:%S");
+      char str[20];
+      strftime(str, sizeof str, "%H:%M:%S", timeinfo); 
+      retString += "; at " + String(str);
+    } else {
+      Serial.println("No time available (yet)");
+    }
   }
   return retString;
 }
@@ -365,8 +366,8 @@ void relayUpdated(int relay, int value){
 
 
 void measuresUpdated(){
-  if (events.count()>0 & (millis() - cd.gatherTime < DEFAULT_GATHER_RATE*2)){
-    events.send(measureText().c_str(), "chargedata",millis());
+  if (events.count()>0 & (millis() - (cd.gatherMillis) < DEFAULT_GATHER_RATE*2)){
+    events.send(measureText().c_str(), "chargedata", millis());
   }
 }
 
@@ -384,7 +385,7 @@ bool autoAdjustSingleRelay(double currentVal, bool currentState, double val, dou
   info += String(currentVal);
   info += " currentState="; 
   info += currentState?"on val=":"off val="; 
-  info += String(currentVal); 
+  info += String(val); 
   info += " resVal="; 
   info += String(resVal); 
   info += opposite?" opposite=true":" opposite=false";
@@ -410,7 +411,7 @@ sending out the event to update the screen etc.
 void doAutoControl(){
   double theCurrentValue;
   //Make sure that the data that was received is recent
-  if (millis() - cd.gatherTime <= DEFAULT_GATHER_RATE){
+  if (millis() - cd.gatherMillis <= DEFAULT_GATHER_RATE){
     for (int i=0; i< relays.numberOfRelays(); i++){
       //Only run the check if the measure is not "IGNORE"
       if (automaticData[i].measure != IGNORE){
@@ -437,8 +438,11 @@ void doAutoControl(){
 
         Serial.println("Checking relay = " + String(i));
         relays[i].setRelayStatus(
-          autoAdjustSingleRelay(theCurrentValue, 
-          relays[i].getRelayStatus(),automaticData[i].value,automaticData[i].restoreValue));
+          autoAdjustSingleRelay(
+            theCurrentValue, 
+            relays[i].getRelayStatus(),
+            automaticData[i].value,
+            automaticData[i].restoreValue));
       }
     }
   }
@@ -551,7 +555,7 @@ void setup() {
 if (!initWiFi()){
   Serial.print("Setting AP (Access Point)…");
   // Remove the password parameter, if you want the AP (Access Point) to be open
-  WiFi.softAP("RELAYCONTROL", "aabbcc112233");
+  WiFi.softAP(hostName, "aabbcc112233");
 
   IPAddress IP = WiFi.softAPIP();
   ESP_LOGD(TAG,"AP IP address: %s", IP.toString());
@@ -608,10 +612,8 @@ if (!initWiFi()){
   });
 
   server.on("/relayconfig", HTTP_POST, [](AsyncWebServerRequest *request) {
-    ESP_LOGD(TAG, "caught post");
     int params = request->params();
     bool saveIt = false; //did anything change?
-    ESP_LOGD(TAG, "caught post 2");
     
     for(int i=0;i<params;i++){
       AsyncWebParameter* p = request->getParam(i);
@@ -743,8 +745,8 @@ if (!initWiFi()){
   
   modbusGood = false;
   int i = 0;
-  while (!modbusGood and i++<100) {
-    modbusGood = setupModbus(classicip,classicport);
+  while (!modbusGood and i++<10) {
+    modbusGood = setupModbus(classicip, classicport, WiFi);
     if (!modbusGood)
     {
       Serial.println("Modbus setup failed");
@@ -782,8 +784,8 @@ void loop() {
         //got modbus data, process it.
         printModbusData();
         cd = getChargerData();
-        measuresUpdated();
         doAutoControl();
+        measuresUpdated();
       }
     }
   }

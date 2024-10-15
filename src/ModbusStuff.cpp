@@ -4,7 +4,6 @@
 #include "ModbusStuff.h"
 #include "ChargeControllerInfo.h"
 
-
 int _currentRegister = 0;
 uint16_t _currentRequestId = 0;
 
@@ -78,7 +77,6 @@ void feed_watchdog()
 		timerWrite(_watchdogTimer, 0); // feed the watchdog
 	}
 }
-
 
 void resetStart_modbusReadTimer()
 {

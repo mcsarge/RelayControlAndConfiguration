@@ -1,9 +1,7 @@
 #include <Arduino.h>
 #include "OTAStuff.h"
 
-
 unsigned long ota_progress_millis = 0;
-
 
 void onOTAStart() {
   // Log when OTA has started

@@ -3,18 +3,17 @@
 #include "WebStuff.h"
 #include "AutoData.h"
 
-
-
-String measureString(AutoMeasure measure, AutoMeasure select){
+String allMeasureStrings(AutoMeasure select){
   String retString;
-  retString = "<option value=\"" + autoMeasureInfo[measure].shortName + "\" ";
-  retString += (select==measure?"selected":"");
-  retString += ">" + autoMeasureInfo[measure].longName + "</option>";
+  for (int i=SOC; i<=IGNORE; i++){
+    retString = "<option value=\"" + autoMeasureInfo[(AutoMeasure)i].shortName + "\" ";
+    retString += (select==(AutoMeasure)i?"selected":"");
+    retString += ">" + autoMeasureInfo[(AutoMeasure)i].longName + "</option>";
+  }
   return retString;
 }
 
-String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
-  
+String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){  
   return 
       String("<div class=\"relay-section\">")
     + String("<h3>" + relay.getRelayFixedName() + "</h3>")
@@ -29,12 +28,7 @@ String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData){
     + String(   "<div class=\"relay-item\">")
     + String(     "<label for=\"" + relay.getRelayFixedShortName() + "-measure\">Measure:</label>")
     + String(     "<select id=\"" + relay.getRelayFixedShortName() + "-measure\" name=\"" + relay.getRelayFixedShortName() + "-measure\">")
-    +             measureString(SOC, relayAutoData.measure)
-    +             measureString(BATVOLT, relayAutoData.measure)
-    +             measureString(BATCURRENT, relayAutoData.measure)
-    +             measureString(PVVOLT, relayAutoData.measure)
-    +             measureString(PVCURRENT, relayAutoData.measure)
-    +             measureString(IGNORE, relayAutoData.measure)
+    +             allMeasureStrings(relayAutoData.measure)
     + String(     "</select>")
     + String(   "</div>")
     + String(   "<div class=\"relay-item\">")
@@ -62,4 +56,3 @@ String eventListenerJS(LilygoRelays::lilygoRelay relay){
           "console.log(\"" + relay.getRelayFixedShortName() + "\", e.data);" +
           "document.getElementById(\"" + relay.getRelayFixedShortName() + "\").checked = (e.data?.toLowerCase()?.trim()==\"1\");}, false);";
 };
-

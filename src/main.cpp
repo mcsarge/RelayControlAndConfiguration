@@ -25,9 +25,6 @@ This code works with the Lilygo Relay 8 and relay 4
 #include "WebStuff.h"
 #include "AutoData.h"
 
-
-
-
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 // Create an Event Source on /events
@@ -37,11 +34,9 @@ AsyncEventSource events("/events");
 const char* PARAM_DEVICE_NAME = "name";
 const char* PARAM_SSID = "ssid";
 const char* PARAM_PASS = "pass";
-
 const char* PARAM_CLASSIC_NAME = "classicname";
 const char* PARAM_CLASSIC_IP = "classicip";
 const char* PARAM_CLASSIC_PORT = "classicport";
-
 const char* DEFAULT_CLASSIC_IP = "192.168.0.225";
 const char* DEFAULT_CLASSIC_PORT = "502";
 const char* DEFAULT_CLASSIC_NAME = "Classic";
@@ -75,13 +70,11 @@ const char* classicportPath = "/classicport.txt";
 const char* configPath = "/relayconfig.json";
 const char* automaticPath = "/automatic.txt";
 
-
 // Timer variables
 unsigned long previousMillis = 0;
 const long interval = 10 *1000;  // Wait 10 seconds for Wi-Fi connection (milliseconds)
 
 using namespace ace_button;
-
 #define SAVE_DELAY                  2000 // Delay to wait after a save was requested in case we get a bunch quickly
 
 const char *ntpServer1 = "pool.ntp.org";
@@ -105,10 +98,8 @@ unsigned long lastTime = 0;
 unsigned long timerDelay = 30000;
 unsigned long wifiReconnectPreviousMillis = millis();
 
-
 bool modbusGood = false;
 chargerData cd;
-
 
 // Create a eSPIFFS class
 #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
@@ -126,7 +117,6 @@ const String hostName = "Relays-" + ChipId;
 
 AutoData *automaticData;
 
-
 /*
 Initialize the array that stores the information for the automatic control system. 
 This will turn on and off certain relays based on the values gathered from the Solar Controller
@@ -139,7 +129,6 @@ bool AutoControlAllocate(int numberOfRelays){
 void AutoControlFree(){
   free(automaticData);
 }
-
 
 #ifdef LILYGORTC
 // Callback function (get's called when time adjusts via NTP)
@@ -215,18 +204,13 @@ void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
         }
         Serial.println(relays[0].getUserData());
         Serial.println(relays[1].getUserData());
-
-
-
-
-     break;
+        break;
     default:
         break;
     }
     state++;
     state %= 5;
 }
-
 
 void findSetRelay(String rname, int  val){
   ESP_LOGD(TAG, "In findSetRelay relay = %s val= %d", rname, val);
@@ -264,7 +248,6 @@ String measureText(){
   }
   return retString;
 }
-
 
 String processor(const String& replacementString){
   ESP_LOGD(TAG, "In Processor");
@@ -364,23 +347,19 @@ void relayUpdated(int relay, int value){
   }
 }
 
-
 void measuresUpdated(){
   if (events.count()>0 & (millis() - (cd.gatherMillis) < DEFAULT_GATHER_RATE*2)){
     events.send(measureText().c_str(), "chargedata", millis());
   }
 }
 
-
 bool autoAdjustSingleRelay(double currentVal, bool currentState, double val, double resVal){
-
   bool retVal = false;  
   bool opposite = false;  //is this a 'normal' where resVal is greater than val or opposite?
 
   if (resVal < val) {
     opposite = true;
   }
-
   String info = "autoAdjustSingleRelay: currentVal="; 
   info += String(currentVal);
   info += " currentState="; 
@@ -448,10 +427,6 @@ void doAutoControl(){
   }
 }
 
-
-
-
-
 void setup() {
   //Do this ASAP so that the relays will all be turned off before setting to their previous values.
   relays.initialize();
@@ -491,7 +466,6 @@ void setup() {
       Serial.println("Failed to find PCF8563 - check your wiring!");
 
 #endif
-
   // Create a eSPIFFS class
   #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
     // Check Flash Size - Always try to incorrperate a check when not debugging to know if you have set the SPIFFS correctly
@@ -662,7 +636,6 @@ if (!initWiFi()){
         }
       }
     }
-
     if (saveIt) {
       ESP_LOGD(TAG, "Requesting Save");
       lastSaveRequestTime = millis();
@@ -760,12 +733,8 @@ if (!initWiFi()){
 	init_watchdog();
 }
 
-
-
 void loop() {
-
   feed_watchdog();
-
   ElegantOTA.loop();
   boot.check();
   relays.loop();
@@ -816,12 +785,8 @@ void loop() {
     fileSystem.saveToFile(classicipPath, classicip);            
     fileSystem.saveToFile(classicportPath, classicport);   
     delay(3000); //wait 3 seconds, then restart.
-    ESP.restart();
-         
+    ESP.restart();         
   }
-
-
-
 #ifdef LILYGORTC
   if (millis() - lastMillis > (1000*60*10)) { //10 minutes
       lastMillis = millis();
@@ -832,8 +797,6 @@ void loop() {
       // Serial.printf(" Hour:"); Serial.print(datetime.hour);
       // Serial.printf(" Minute:"); Serial.print(datetime.minute);
       // Serial.printf(" Sec :"); Serial.println(datetime.second);
-
   }
 #endif
-
 }

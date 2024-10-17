@@ -72,7 +72,7 @@ const char* automaticPath = "/automatic.txt";
 
 // Timer variables
 unsigned long previousMillis = 0;
-const long interval = 10 *1000;  // Wait 10 seconds for Wi-Fi connection (milliseconds)
+const long interval = 10*1000;  // Wait 10 seconds for Wi-Fi connection (milliseconds)
 
 using namespace ace_button;
 #define SAVE_DELAY                  2000 // Delay to wait after a save was requested in case we get a bunch quickly
@@ -116,19 +116,6 @@ String ChipId = String((uint32_t)ESP.getEfuseMac(), HEX);
 const String hostName = "Relays-" + ChipId;
 
 AutoData *automaticData;
-
-/*
-Initialize the array that stores the information for the automatic control system. 
-This will turn on and off certain relays based on the values gathered from the Solar Controller
-*/
-bool AutoControlAllocate(int numberOfRelays){
-  automaticData = (AutoData*)malloc(sizeof(AutoData) * numberOfRelays); 
-  return true;
-}
-
-void AutoControlFree(){
-  free(automaticData);
-}
 
 #ifdef LILYGORTC
 // Callback function (get's called when time adjusts via NTP)
@@ -434,7 +421,7 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  AutoControlAllocate(relays.numberOfRelays());
+  automaticData = AutoControlAllocate(relays.numberOfRelays());
 
   //delay(20000); //20 seconds for debugging/
   ESP_LOGD(TAG,"Booted");
@@ -787,6 +774,7 @@ void loop() {
     delay(3000); //wait 3 seconds, then restart.
     ESP.restart();         
   }
+  
 #ifdef LILYGORTC
   if (millis() - lastMillis > (1000*60*10)) { //10 minutes
       lastMillis = millis();

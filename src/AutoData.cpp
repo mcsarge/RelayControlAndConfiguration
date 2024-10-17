@@ -2,6 +2,20 @@
 #include "AutoData.h"
 #include <ArduinoJson.h>
 
+
+/*
+Initialize the array that stores the information for the automatic control system. 
+This will turn on and off certain relays based on the values gathered from the Solar Controller
+*/
+AutoData* AutoControlAllocate(int numberOfRelays){
+  return (AutoData*)malloc(sizeof(AutoData) * numberOfRelays);
+}
+
+void AutoControlFree(AutoData* data){
+  free(data);
+}
+
+
 AutoMeasure fromString(String theMeasure){
     for  (int i=SOC; i <= IGNORE; i++){
         if (autoMeasureInfo[i].shortName==theMeasure) return autoMeasureInfo[i].autoMeasure;

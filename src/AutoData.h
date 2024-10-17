@@ -29,6 +29,7 @@ struct AutoData
    double restoreValue = 0; //If (relayState = Off AND reading >= restoreValue) then relayState = ON, else relayState remains OFF
 };
 
+AutoData* AutoControlAllocate(int numberOfRelays);
 AutoMeasure fromString(String theMeasure);
 String asRawJson(AutoData item);
 AutoData fromJson(String rawJson);

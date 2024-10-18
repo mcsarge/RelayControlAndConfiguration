@@ -1,3 +1,14 @@
+/**
+ * Author:      Matthew C. Sargent
+ * Created:     10/18/2024
+ * Description: This is intended to group the data structures and code needed to implement the automatic control of the relays
+ * based on the data gathered from the Midnite Classic solar controller. Currently, the only parameters that are collected are 
+ * listed in the enum "AutoMeasure" but this could be modified to include other measures. If you modify the possible
+ * automatic measures, you will need to modify the chargerDataForRelayControl that is gathered by the ModbusStuff code.
+ * 
+ * (c) Copyright by Matthew C. Sargent.
+ **/
+
 #include <Arduino.h>
 
 #ifndef AUTOMEASURE_H
@@ -33,7 +44,6 @@ AutoData* AutoControlAllocate(int numberOfRelays);
 AutoMeasure fromString(String theMeasure);
 String asRawJson(AutoData item);
 AutoData fromJson(String rawJson);
-
-
+bool autoAdjustSingleRelay(double currentVal, bool currentState, AutoData thisAutoData);
 
 #endif

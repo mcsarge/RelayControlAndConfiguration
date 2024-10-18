@@ -33,7 +33,7 @@ unsigned long _currentGatherRate = DEFAULT_GATHER_RATE;
 
 esp32ModbusTCP *_pClassic;
 ChargeControllerInfo _chargeControllerInfo;
-chargerData _chargerData;
+chargerDataForRelayControl _chargerData;
 
 void IRAM_ATTR clearModbusRead()
 {
@@ -439,7 +439,7 @@ bool gatherModbusData() {
 				_chargerData.PVVoltage = _chargeControllerInfo.PVVoltage;
 				_chargerData.PVCurrent = _chargeControllerInfo.PVCurrent;
 				_chargerData.gatherMillis = millis();
-			    time(&_chargerData.gatherTime); //store the gather time.
+			    time(&_chargerData.timeDataWasGathered); //store the gather time.
 
 				doGather = false;
 				_currentGatherRate = DEFAULT_GATHER_RATE;
@@ -470,6 +470,6 @@ void printModbusData(){
 
 }
 
-chargerData getChargerData(){
+chargerDataForRelayControl getChargerData(){
     return _chargerData;
 }

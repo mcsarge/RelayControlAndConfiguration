@@ -12,11 +12,16 @@
 #define DEFAULT_GATHER_RATE 120000               //300,000 = 5 minutes, 60,000 = 1 minute, 120,000 = 2 minutes
 #define INITIAL_MODBUS_COLLECTION_DELAY 15000    //15,000 15 seconds
 
-struct chargerData
+/**
+ * Thsi data structure contains the values that can be used for automatically controlling the relays.
+ * If additional measures are needed, create an entry here and then set the value in the code where
+ * the other values are being set. The measures then can be used in the code to automatically control
+ * the relays.
+ */
+struct chargerDataForRelayControl
 {
    unsigned long gatherMillis = 0;
-   time_t gatherTime = 0;
-
+   time_t timeDataWasGathered = 0;
    int SOC = 0;
    double BatVoltage = -1;
    double BatCurrent = -1;
@@ -31,6 +36,6 @@ bool setupModbus(String ip_addr, String port_number, WiFiClass _wifi);
 bool gatherModbusData();
 void printModbusData();
 
-chargerData getChargerData();
+chargerDataForRelayControl getChargerData();
 
 #endif

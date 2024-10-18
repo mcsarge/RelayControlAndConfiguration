@@ -1,6 +1,6 @@
 /*********
 Relay Control and Configuration
-This code works with the Lilygo Relay 8 and relay 4
+This code works with all the Lilygo Relay boards.
 *********/
 
 #include <Arduino.h>
@@ -9,7 +9,9 @@ This code works with the Lilygo Relay 8 and relay 4
 #include <ArduinoJson.h>
 #include <Effortless_SPIFFS.h>
 #include <esp_log.h>
+#ifdef LILYGO_RELAY6
 #include <SensorPCF8563.hpp>
+#endif
 #include <esp_sntp.h>
 #include <AceButton.h>
 #include <ElegantOTA.h>
@@ -75,7 +77,7 @@ unsigned long previousMillis = 0;
 const long interval = 10*1000;  // Wait 10 seconds for Wi-Fi connection (milliseconds)
 
 using namespace ace_button;
-#define SAVE_DELAY                  2000 // Delay to wait after a save was requested in case we get a bunch quickly
+#define RELAY_SAVE_DELAY                  2000 // Delay to wait after a save was requested in case we get a bunch quickly
 
 const char *ntpServer1 = "pool.ntp.org";
 const char *ntpServer2 = "time.nist.gov";
@@ -83,9 +85,13 @@ const char *ntpServer2 = "time.nist.gov";
 AceButton boot;
 uint8_t state = 0;
 
-LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo6Relays,1);
-
-#ifdef LILYGORTC
+//Initialize the correct type of relay board.
+#if defined (LILYGO_RELAY4)
+LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo4Relays,1);
+#elif defined (LILYGO_RELAY8)
+LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo8Relays,1);
+#elif defined(LILYGO_RELAY6)
+LilygoRelays relays = LilygoRelays(LilygoRelays::Lilygo6Relays,LILYGO_RELAY6_BANKS);
 uint32_t lastMillis;
 SensorPCF8563 rtc;
 #endif
@@ -99,7 +105,6 @@ unsigned long timerDelay = 30000;
 unsigned long wifiReconnectPreviousMillis = millis();
 
 bool modbusGood = false;
-chargerData cd;
 
 // Create a eSPIFFS class
 #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
@@ -110,14 +115,12 @@ chargerData cd;
   eSPIFFS fileSystem(&Serial);  // Optional - allow the methods to print debug
 #endif
 
-// IotWebConf
 String ChipId = String((uint32_t)ESP.getEfuseMac(), HEX);
-// -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const String hostName = "Relays-" + ChipId;
 
+//The data that is used to to automatic relay swithcing based on solar parameters
 AutoData *automaticData;
 
-#ifdef LILYGORTC
 // Callback function (get's called when time adjusts via NTP)
 void timeavailable(struct timeval *t)
 {
@@ -128,9 +131,10 @@ void timeavailable(struct timeval *t)
         Serial.println("No time available (yet)");
         return;
     }
+#ifdef LILYGO_RELAY6
     rtc.hwClockWrite();
-}
 #endif
+}
 
 void ButtonHandleEvent(AceButton *n, uint8_t eventType, uint8_t buttonState)
 {
@@ -209,7 +213,7 @@ void findSetRelay(String rname, int  val){
   }
 }
 
-String measureText(){
+String measureText(chargerDataForRelayControl cd){
   String retString = "Charger and Battery status will be displayed here.";
   time_t now;
   time(&now);
@@ -223,7 +227,7 @@ String measureText(){
     retString += "A";
     
     struct tm *timeinfo;
-    timeinfo = localtime(&cd.gatherTime);
+    timeinfo = localtime(&cd.timeDataWasGathered);
     if(timeinfo->tm_year > (2016 - 1900)){ //is the time good?
       Serial.println(timeinfo, "%A, %B %d %Y %H:%M:%S");
       char str[20];
@@ -263,7 +267,7 @@ String processor(const String& replacementString){
     return classicport;
   }
   else if (replacementString == "CHARGERINFORMATION"){
-    String mt = measureText();
+    String mt = measureText(getChargerData());
     ESP_LOGD(TAG, "CHARGERINFORMATION - %", mt);
     return mt;
   }
@@ -334,39 +338,12 @@ void relayUpdated(int relay, int value){
   }
 }
 
-void measuresUpdated(){
+void measuresUpdated(chargerDataForRelayControl cd){
   if (events.count()>0 & (millis() - (cd.gatherMillis) < DEFAULT_GATHER_RATE*2)){
-    events.send(measureText().c_str(), "chargedata", millis());
+    events.send(measureText(getChargerData()).c_str(), "chargedata", millis());
   }
 }
 
-bool autoAdjustSingleRelay(double currentVal, bool currentState, double val, double resVal){
-  bool retVal = false;  
-  bool opposite = false;  //is this a 'normal' where resVal is greater than val or opposite?
-
-  if (resVal < val) {
-    opposite = true;
-  }
-  String info = "autoAdjustSingleRelay: currentVal="; 
-  info += String(currentVal);
-  info += " currentState="; 
-  info += currentState?"on val=":"off val="; 
-  info += String(val); 
-  info += " resVal="; 
-  info += String(resVal); 
-  info += opposite?" opposite=true":" opposite=false";
-
-  Serial.println(info);
-
-  if (currentState){ //If the relay is ON
-    retVal = (opposite?!(currentVal >= val):(currentVal >= val));
-  } else { //the relay is currently off
-    retVal = (opposite?!(currentVal >= resVal):(currentVal >= resVal));
-  }
-  Serial.print("Returning ");
-  Serial.println(retVal?"true":"false");
-  return retVal;
-}
 
 /*
 Process the settings found in autoData against the data collected from the solar charger and 
@@ -374,7 +351,7 @@ change the state of any relays that need to be switched based on the charger dat
 Note calling setRelayStatus will only chage the relay if the value is different and it will handle
 sending out the event to update the screen etc.
 */
-void doAutoControl(){
+void doAutoControl(chargerDataForRelayControl cd){
   double theCurrentValue;
   //Make sure that the data that was received is recent
   if (millis() - cd.gatherMillis <= DEFAULT_GATHER_RATE){
@@ -407,8 +384,7 @@ void doAutoControl(){
           autoAdjustSingleRelay(
             theCurrentValue, 
             relays[i].getRelayStatus(),
-            automaticData[i].value,
-            automaticData[i].restoreValue));
+            automaticData[i]));
       }
     }
   }
@@ -436,9 +412,10 @@ void setup() {
   buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
   buttonConfig->setLongPressDelay(5000);
 
-#ifdef LILYGORTC
-  pinMode(RTC_IRQ, INPUT_PULLUP);
 
+//Setup the RTC Chip (Only on the Relay6 boards)
+#ifdef LILYGO_RELAY6
+  pinMode(RTC_IRQ, INPUT_PULLUP);
   bool found=false;
   for (int i=0; i<5; i++){
     if (!rtc.begin(Wire, PCF8563_SLAVE_ADDRESS, I2C_SDA, I2C_SCL)) {
@@ -451,8 +428,8 @@ void setup() {
   }
   if (!found)
       Serial.println("Failed to find PCF8563 - check your wiring!");
-
 #endif
+
   // Create a eSPIFFS class
   #ifndef USE_SERIAL_DEBUG_FOR_eSPIFFS
     // Check Flash Size - Always try to incorrperate a check when not debugging to know if you have set the SPIFFS correctly
@@ -535,7 +512,6 @@ if (!initWiFi()){
   ElegantOTA.onProgress(onOTAProgress);
   ElegantOTA.onEnd(onOTAEnd);
 
-#ifdef LILYGORTC
   // set notification call-back function
   sntp_set_time_sync_notification_cb( timeavailable );
 
@@ -546,7 +522,6 @@ if (!initWiFi()){
    */
   configTzTime("EST5EDT,M3.2.0,M11.1.0", ntpServer1, ntpServer2);
   //configTzTime("CST-8", ntpServer1, ntpServer2);
-#endif
 
   server.rewrite("/", "/index").setFilter(ON_STA_FILTER);
   server.rewrite("/", "/wifimanager").setFilter(ON_AP_FILTER);
@@ -739,14 +714,15 @@ void loop() {
       if (gatherModbusData()){
         //got modbus data, process it.
         printModbusData();
-        cd = getChargerData();
-        doAutoControl();
-        measuresUpdated();
+        //Control the relays
+        doAutoControl(getChargerData());
+        //Notify any web pages that the measures have been updated
+        measuresUpdated(getChargerData());
       }
     }
   }
 
-  if (lastSaveRequestTime!=-1 and (lastSaveRequestTime+SAVE_DELAY<millis())) {
+  if (lastSaveRequestTime!=-1 and (lastSaveRequestTime+RELAY_SAVE_DELAY<millis())) {
     lastSaveRequestTime = -1;
     ESP_LOGD(TAG,"Save was requested");
 
@@ -762,7 +738,7 @@ void loop() {
     fileSystem.saveToFile(configPath, config);
   }
 
-  if (wifiNeedsSave!=-1 and (wifiNeedsSave+SAVE_DELAY<millis())) {
+  if (wifiNeedsSave!=-1 and (wifiNeedsSave+RELAY_SAVE_DELAY<millis())) {
     wifiNeedsSave = -1;
     ESP_LOGD(TAG,"WiFi configuration Save was requested");
     fileSystem.saveToFile(namePath, name);
@@ -775,7 +751,7 @@ void loop() {
     ESP.restart();         
   }
   
-#ifdef LILYGORTC
+#if defined(LILYGORELAY6)
   if (millis() - lastMillis > (1000*60*10)) { //10 minutes
       lastMillis = millis();
       RTC_DateTime datetime = rtc.getDateTime();

@@ -2,13 +2,12 @@
 #include "AutoData.h"
 #include <ArduinoJson.h>
 
-
 /*
 Initialize the array that stores the information for the automatic control system. 
 This will turn on and off certain relays based on the values gathered from the Solar Controller
 */
 AutoData* AutoControlAllocate(int numberOfRelays){
-  return (AutoData*)malloc(sizeof(AutoData) * numberOfRelays);
+    return (AutoData*)malloc(sizeof(AutoData) * numberOfRelays);
 }
 
 void AutoControlFree(AutoData* data){
@@ -61,3 +60,32 @@ AutoData fromJson(String rawJson){
 
     return newAd;
 }
+
+bool autoAdjustSingleRelay(double currentVal, bool currentState, AutoData thisAutoData){
+  bool retVal = false;  
+  bool opposite = false;  //is this a 'normal' where resVal is greater than val or opposite?
+
+  if (thisAutoData.restoreValue < thisAutoData.value) {
+    opposite = true;
+  }
+  String info = "autoAdjustSingleRelay: currentVal="; 
+  info += String(currentVal);
+  info += " currentState="; 
+  info += currentState?"on val=":"off val="; 
+  info += String(thisAutoData.value); 
+  info += " resVal="; 
+  info += String(thisAutoData.restoreValue); 
+  info += opposite?" opposite=true":" opposite=false";
+
+  Serial.println(info);
+
+  if (currentState){ //If the relay is ON
+    retVal = (opposite?!(currentVal >= thisAutoData.value):(currentVal >= thisAutoData.value));
+  } else { //the relay is currently off
+    retVal = (opposite?!(currentVal >= thisAutoData.restoreValue):(currentVal >= thisAutoData.restoreValue));
+  }
+  Serial.print("Returning ");
+  Serial.println(retVal?"true":"false");
+  return retVal;
+}
+

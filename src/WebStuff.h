@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "LilygoRelays.hpp"
+#include "LilyGoRelays.hpp"
 #include "AutoData.h"
 
 String configHTML(LilygoRelays::lilygoRelay relay, AutoData relayAutoData);

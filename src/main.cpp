@@ -6,6 +6,7 @@ This code works with all the Lilygo Relay boards.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Effortless_SPIFFS.h>
 #include <esp_log.h>
@@ -15,7 +16,6 @@ This code works with all the Lilygo Relay boards.
 #include <esp_sntp.h>
 #include <AceButton.h>
 #include <ElegantOTA.h>
-#include <ESPAsyncWebServer.h>
 #include <LilyGoRelays.hpp>
 #include <esp32ModbusTCP.h>
 #include "Log.h"
@@ -552,7 +552,7 @@ if (!initWiFi()){
     bool saveIt = false; //did anything change?
     
     for(int i=0;i<params;i++){
-      AsyncWebParameter* p = request->getParam(i);
+      const AsyncWebParameter* p = request->getParam(i);
       if(p->isPost()){
         // HTTP POST name value
         ESP_LOGD(TAG, "%s", p->name());
@@ -636,7 +636,7 @@ if (!initWiFi()){
   server.on("/wifimanager", HTTP_POST, [](AsyncWebServerRequest *request) {
     int params = request->params();
     for(int i=0;i<params;i++){
-      AsyncWebParameter* p = request->getParam(i);
+      const AsyncWebParameter* p = request->getParam(i);
       if(p->isPost()){
         // HTTP POST name value
         if (p->name() == PARAM_DEVICE_NAME) {

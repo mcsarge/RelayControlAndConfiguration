@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <LilygoRelays.hpp>
+#include <LilyGoRelays.hpp>
 #include "WebStuff.h"
 #include "AutoData.h"
 
